@@ -1,0 +1,25 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/reports_out/
+# CLI build artifacts
+cli/dist/
+cli/build/
+**/__pycache__/
+*.egg-info/
+*.pyc
+# Node
+frontend/node_modules/
+frontend/.next/
+# Env
+.env
+
+# Generated evidence screenshots
+backend/evidence_out/
+backend/*.db-wal
+backend/*.db-shm
+frontend/tsconfig.tsbuildinfo
+frontend/.claude/
+backups/

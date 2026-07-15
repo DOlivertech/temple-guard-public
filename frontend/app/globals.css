@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+body {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(56, 189, 248, 0.08), transparent),
+    #0b1120;
+  color: #e2e8f0;
+}
+
+@layer components {
+  .card {
+    @apply bg-panel border border-edge rounded-xl;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium
+           border border-edge bg-panel2 hover:border-accent/60 hover:text-white transition;
+  }
+  .btn-primary {
+    @apply bg-accent text-ink border-accent hover:bg-accent2 font-semibold;
+  }
+  .chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs border border-edge bg-panel2;
+  }
+  .label { @apply text-xs uppercase tracking-wider text-slate-400; }
+  .input {
+    @apply w-full bg-ink border border-edge rounded-lg px-3 py-2 text-sm
+           focus:outline-none focus:border-accent;
+  }
+}
+
+.reactflow-wrap .react-flow__attribution { display: none; }

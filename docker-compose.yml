@@ -1,0 +1,61 @@
+# Project Temple Guard — full local stack.
+#
+#   docker compose up            # build + run postgres + backend + frontend
+#   open http://localhost:3000
+#
+# Data lives in the named volumes below (tg_pgdata / tg_evidence / tg_reports),
+# so it survives restarts. Back it up with ./backup.sh (pg_dump) and sync the
+# backups/ folder to the cloud whenever you like.
+#
+# The backend mounts the host Docker socket so it can spin up the Temple Guard
+# Kali toolbox container for every scan (docker-out-of-docker). Build it once
+# with `docker build -t templeguard/kali:latest backend/docker/kali`.
+# On Docker Desktop this just works.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: temple
+      POSTGRES_PASSWORD: ${TG_DB_PASSWORD:-temple}
+      POSTGRES_DB: templeguard
+    volumes:
+      - tg_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"          # host 5433 to avoid clashing with a local Postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temple -d templeguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TG_DATABASE_URL: postgresql+psycopg2://temple:${TG_DB_PASSWORD:-temple}@postgres:5432/templeguard
+      TG_EXECUTION_MODE: ${TG_EXECUTION_MODE:-docker}
+      TG_CORS_ORIGINS: http://localhost:3000
+      TG_FRONTEND_URL: http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # spawn scan/tool containers
+      - tg_evidence:/app/evidence_out
+      - tg_reports:/app/reports_out
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    environment:
+      # Server-side proxy target (rewrites /api and /evidence-img → backend).
+      NEXT_PUBLIC_API_BASE: http://backend:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  tg_pgdata:
+  tg_evidence:
+  tg_reports:

@@ -1,0 +1,19 @@
+{
+  "name": "temple-guard-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Project Temple Guard — desktop shell",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.templeguard.app",
+    "productName": "Temple Guard",
+    "files": ["main.js", "preload.js", "icon.png"]
+  },
+  "devDependencies": {
+    "electron": "31.2.1"
+  }
+}
