@@ -68,133 +68,80 @@ client-ready report. You can do this for several clients simultaneously.
 
 ## Screenshots
 
+> The platform running in **simulation mode**. Every view is scope-gated to authorized targets.
+
 ### Operations dashboard
-Live posture across every client — clients, engagements, scans (running/queued),
-findings, open criticals, risk distribution, and recent scan activity.
+Live posture across every client — engagements, scans (running / queued), findings, open
+criticals, risk distribution, and recent activity.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-### Clients
-Multi-tenant. Each client carries its own authorization status and scope; scans
-are blocked until a client is `authorized`.
+### Clients & engagements
+Multi-tenant: each **client** carries its own authorization status; each **engagement**
+carries an authorized scope, an auth reference, and a rules-of-engagement window.
 
-![Clients](docs/screenshots/clients.png)
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/clients.png" alt="Clients"/></td>
+<td width="50%"><img src="docs/screenshots/engagements.png" alt="Engagements"/></td>
+</tr>
+</table>
 
-### Engagements & selectable audit standards
-Pick standards as buttons (single or multiple), point at an authorized scope, and run.
-Scope is a chip input with **fuzzy autocomplete** from the client's known hosts, plus
-an explicit **"Any target (\*)"** wildcard for environments you fully own.
-
-![Scope autocomplete](docs/screenshots/scope-input.png)
-![Engagements](docs/screenshots/engagements.png)
-![Standards picker](docs/screenshots/standards-picker.png)
-
-### Engagement detail — findings & remediation
-Run the audit, then expand any finding for evidence, mapped compliance controls,
-CVSS, and a concrete fix. Triage each finding inline.
+Open an engagement to pick **audit standards**, add **web / API / phone / app** targets,
+set the **authorized scope** and **scan network**, and run — findings, discovered assets,
+and the report all hang off it.
 
 ![Engagement detail](docs/screenshots/engagement-detail.png)
 
-### Web evidence capture (Playwright)
-A real browser screenshots the target and checks security headers live. The
-capture embeds in the finding (and the client report) — visual proof of what was
-assessed and what's exposed.
+### Topology & the Container Control Center
+Left: the client → engagement → discovered-asset graph, coloured by worst finding severity.
+Right: a Kubernetes-style **Cluster view** of every scan / console container, grouped into
+client → engagement **namespaces** with a control-plane summary bar and live CPU / MEM gauges.
 
-![Web evidence capture](docs/screenshots/web-evidence.png)
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/topology.png" alt="Topology"/></td>
+<td width="50%"><img src="docs/screenshots/control-center.png" alt="Container Control Center — Cluster view"/></td>
+</tr>
+</table>
 
-### Audit targets — web, API & app
-Add a target, pick Web, API, or App (with an OS), and a container spins up to attack it.
-Web targets are screenshotted + scanned; app targets are fetched and statically
-dissected. Findings (and screenshots) flow into Evidence and the report.
+### Live Kali shell · Blue / SOC team ops
+Left: provision a container per engagement and **shell in live, from the browser**. Right:
+the **Blue / SOC** defensive team-ops catalog — bounded, read-only posture and detection
+checks (headers, TLS, cookies, security.txt, SPF/DMARC, a SOC detection canary).
 
-![Audit targets](docs/screenshots/audit-targets.png)
-
-### API testing — discover, scope by level, send batches
-Point an API target at a base URL and **discover** its endpoints (OpenAPI/Swagger
-spec, or common-path probing). Browse them as a **drill-down path tree** — select
-by level or method (GET/POST/…), each / all / batches — then fire **bounded**
-request bursts. Per-endpoint status + latency (avg/p95/max) is logged and analyzed
-against the OWASP API Security Top 10 (unauth access, missing rate limiting, slow
-endpoints, verbose errors).
-
-![API tester](docs/screenshots/api-tester.png)
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/consoles.png" alt="Live in-browser Kali shell"/></td>
+<td width="50%"><img src="docs/screenshots/team-ops.png" alt="Blue / SOC team operations"/></td>
+</tr>
+</table>
 
 ### Playbooks — orchestrated Kali pipelines
-Ordered, multi-step operations that chain tools in sequence (footprint →
-fingerprint → scan → discover → vuln-scan). Each step runs in its own Kali
-container and only starts after the previous finishes. Launch one and you're
-taken to its live attack dashboard, while every step shows up as a node in the
+Ordered, multi-step operations that chain tools in sequence (footprint → fingerprint → scan
+→ discover → vuln-scan). Each step runs in its own container and lights up as a node in the
 Cluster view.
 
 ![Playbooks](docs/screenshots/playbooks.png)
 
-The launched pipeline streams findings step-by-step on the attack dashboard:
+### Evidence & the client report
+Left: a dedicated **Evidence** section — each item classified by what was found, the proof,
+and the control it violates. Right: generate **client-ready reports** per engagement.
 
-![Playbook running](docs/screenshots/playbook-live.png)
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/evidence.png" alt="Evidence"/></td>
+<td width="50%"><img src="docs/screenshots/reports.png" alt="Reports"/></td>
+</tr>
+</table>
 
-### Per-attack dashboard
-Each attack has a live dashboard — status and elapsed time, the tools run with
-timestamps (click any for its logs), the engaged container images (with live
-logs), findings, a topology map, and a **Stop** button that kills the running
-containers.
+The rendered report — executive summary, risk breakdown, and every finding with remediation
+and linked compliance controls (print → PDF, or download a server-rendered PDF):
 
-![Per-attack dashboard](docs/screenshots/attack-dashboard.png)
+![Client report](docs/screenshots/report.png)
 
-Click any tool to view its logs — live from the container while running, or the
-stored output once it's done:
-
-![Per-tool logs](docs/screenshots/attack-tool-logs.png)
-
-### Blue / SOC team operations
-A defensive team-ops catalog mapped to MITRE ATT&CK — each with a full
-explanation, hardening, and a `script` / `img·kali` engine badge. Every op is
-bounded, read-only, and non-destructive: security-header & TLS posture, cookie
-flags, security.txt / disclosure readiness, SPF/DMARC via real Kali tools, and a
-SOC detection canary. Launches require authorization confirmation and respect the
-rules-of-engagement window.
-
-### Topology
-Client → engagement → discovered-asset graph. Node color = worst finding
-severity. Filterable by client.
-
-![Topology](docs/screenshots/topology.png)
-
-### Kali consoles — live in-browser shell
-Spin up a Kali instance per engagement and get a real `root` shell, in the browser.
-
-![Kali consoles](docs/screenshots/consoles.png)
-
-### Container Control Center — Cluster view
-A Kubernetes-dashboard-style **Cluster view**: every container is a health-colored
-node tile grouped into client → engagement **namespaces**, with a control-plane
-summary bar (nodes, running, CPU avg + MEM peak) and per-node CPU/MEM gauges.
-Click a node to drill into live logs/shell; a **List** toggle gives the classic
-grouped view. Start/stop/restart/remove individually, per-namespace, or in bulk.
-
-![Cluster view](docs/screenshots/cluster-view.png)
-
-### Evidence — classified & linked
-A dedicated Evidence section alongside Reports. Each item is classified by what
-was found, the proof (screenshot), and the control it violates — filterable by
-client, severity, and framework.
-
-![Evidence](docs/screenshots/evidence.png)
-
-Each item has a permalink with the screenshot, what was found, and **linked
-controls** that open the authoritative standard/control on the web.
-
-![Evidence detail](docs/screenshots/evidence-detail.png)
-
-### Client report
-One click generates a report — executive summary, risk breakdown, and every
-finding with remediation, embedded screenshots, and **linked controls** pointing
-at the authoritative standard on the web. A header gives home / back / print /
-**download PDF**; the PDF is rendered server-side via headless Chromium.
-
-📄 **[See a real example report (PDF)](docs/sample-report.pdf)** — generated by
-auditing a local web app + an app artifact (the "Self-Audit" engagement below).
-
-![Report](docs/screenshots/report.png)
+📄 **[See a full example report (PDF)](docs/sample-report.pdf)** — generated from an
+authorized simulation engagement.
 
 ---
 
