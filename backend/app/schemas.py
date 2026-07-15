@@ -61,10 +61,10 @@ class EngagementUpdate(BaseModel):
 
 class TargetCreate(BaseModel):
     kind: str                       # web | app | redteam | api
-    value: str                      # URL, app path/installer URL, or redteam target host
+    value: str                      # URL, app path/installer URL, or team-op target host
     os: Optional[str] = None        # app only: linux | windows | macos
     operation: Optional[str] = None  # redteam only: catalog op id
-    team: Optional[str] = None       # redteam only: red | purple | blue
+    team: Optional[str] = None       # team op only: blue | soc
     extra: Optional[dict] = None     # api only: {endpoints, discover}
     label: Optional[str] = None
 

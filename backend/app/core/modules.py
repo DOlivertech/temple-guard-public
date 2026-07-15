@@ -667,26 +667,6 @@ class AppAnalysisModule(ScanModule):
                             assets=[{"hostname": target, "asset_type": "app"}])
 
 
-class RedTeamPlaceholderModule(ScanModule):
-    name = "redteam_placeholder"
-    pretty = "Red team adversary emulation (placeholder)"
-    runs_in_container = False
-
-    def command(self, target: str) -> list[str]:
-        return ["true"]
-
-    def parse(self, result: ExecResult, target: str) -> ModuleResult:
-        return self.simulate(target)
-
-    def run_real(self, provisioner, target, timeout, labels=None):
-        return self.simulate(target)
-
-    def simulate(self, target: str) -> ModuleResult:
-        return ModuleResult(
-            raw_output="Red team module is a roadmap placeholder. No actions executed.",
-            findings=[], assets=[], ok=True)
-
-
 _API_SPEC_PATHS = ["/openapi.json", "/swagger.json", "/v3/api-docs", "/api-docs",
                    "/swagger/v1/swagger.json", "/openapi.yaml", "/v2/api-docs"]
 _API_COMMON_PATHS = ["/", "/api", "/api/v1", "/v1", "/health", "/healthz", "/status",
@@ -867,14 +847,14 @@ class ApiTestModule(ScanModule):
 
 
 class RedTeamModule(ScanModule):
-    """Executes a red/purple/blue-team operation from the catalog.
+    """Executes a blue / SOC team operation from the catalog.
 
-    Executable ops run bounded, non-destructive checks in-process. Destructive /
-    out-of-scope ops are simulated to produce the attack narrative + a hardening
-    finding (no real attack is performed).
+    All ops run bounded, non-destructive, read-only checks (in-process or via a
+    real tool in the Kali image). The no-Docker path simulates the same op to
+    produce a posture / hardening finding.
     """
     name = "redteam_op"
-    pretty = "Red team operation"
+    pretty = "Team operation"
     runs_in_container = False
 
     def command(self, target):
@@ -900,26 +880,16 @@ class RedTeamModule(ScanModule):
         op = redteam.get_op(self.params.get("operation", ""))
         host = self._host(target)
         if not op:
-            return ModuleResult(raw_output="unknown red-team operation", ok=False,
+            return ModuleResult(raw_output="unknown team operation", ok=False,
                                 error="unknown operation")
         url = target if re.match(r"^https?://", target) else f"https://{host}"
-        lines = [f"# Red team op: {op.name}  [{op.team}/{op.aggressiveness}]",
+        lines = [f"# Team op: {op.name}  [{op.team}/{op.aggressiveness}]",
                  f"# ATT&CK: {op.attack}", f"# Target: {target}", ""]
         findings: list[dict] = []
 
         if op.executable and not simulate:
-            if op.id in ("recon_surface", "posture_check", "header_drift"):
+            if op.id == "posture_check":
                 findings = self._http_recon(url, op, lines)
-            elif op.id in ("resilience_probe", "detection_validation"):
-                findings = self._resilience(url, op, lines)
-            elif op.id in ("cred_spray", "detection_replay"):
-                findings = self._auth_lockout(url, op, lines)
-            elif op.id == "user_enumeration":
-                findings = self._user_enum(url, op, lines)
-            elif op.id == "http_methods":
-                findings = self._http_methods(url, op, lines)
-            elif op.id == "cors_probe":
-                findings = self._cors(url, op, lines)
             elif op.id == "cookie_security":
                 findings = self._cookies(url, op, lines)
             elif op.id == "security_txt":
@@ -978,97 +948,6 @@ class RedTeamModule(ScanModule):
                 lines.append(f"  ✓ {h}")
         return findings
 
-    def _resilience(self, url, op, lines):
-        import httpx
-        from .redteam import RESILIENCE_MAX_REQUESTS
-        codes: dict = {}
-        latencies: list[float] = []
-        errors = 0
-        with httpx.Client(timeout=8, verify=False, follow_redirects=True) as c:
-            for _ in range(RESILIENCE_MAX_REQUESTS):
-                t0 = time.monotonic()
-                try:
-                    resp = c.get(url)
-                    codes[resp.status_code] = codes.get(resp.status_code, 0) + 1
-                    latencies.append(time.monotonic() - t0)
-                except Exception:  # noqa: BLE001
-                    errors += 1
-        avg_ms = (sum(latencies) / len(latencies) * 1000) if latencies else 0
-        lines.append(f"sent {RESILIENCE_MAX_REQUESTS} requests · codes={codes} · "
-                     f"errors={errors} · avg {avg_ms:.0f}ms")
-        defended = codes.get(429, 0) > 0 or codes.get(503, 0) > 0
-        if defended:
-            return [{
-                "title": "Rate limiting / load shedding observed",
-                "severity": "info", "category": "redteam", "standard_refs": [op.attack],
-                "description": "Under a bounded burst the target returned 429/503 — a "
-                "positive sign of application-layer DoS resilience.",
-                "evidence": f"codes={codes}, avg {avg_ms:.0f}ms",
-                "remediation": "Maintain rate limiting; validate thresholds + alerting.",
-            }]
-        return [{
-            "title": "No rate limiting under light burst",
-            "severity": "medium", "category": "redteam", "standard_refs": [op.attack],
-            "description": "A hard-capped burst did not trigger any rate limiting or "
-            "429 responses — the endpoint may be exposed to application-layer DoS.",
-            "evidence": f"codes={codes}, errors={errors}, avg {avg_ms:.0f}ms "
-                        f"({RESILIENCE_MAX_REQUESTS} reqs)",
-            "remediation": op.hardening,
-        }]
-
-    # --- new RED probes -------------------------------------------------
-    def _http_methods(self, url, op, lines):
-        import httpx
-        risky = []
-        try:
-            with httpx.Client(timeout=10, verify=False, follow_redirects=True) as c:
-                opt = c.request("OPTIONS", url)
-                allow = opt.headers.get("allow", opt.headers.get("Allow", ""))
-                lines.append(f"OPTIONS → {opt.status_code}  Allow: {allow or '(none)'}")
-                for m in ("TRACE", "PUT", "DELETE", "CONNECT"):
-                    try:
-                        r = c.request(m, url)
-                        lines.append(f"  {m} → {r.status_code}")
-                        if r.status_code < 400 or m.upper() in allow.upper():
-                            risky.append(f"{m} ({r.status_code})")
-                    except Exception:
-                        pass
-        except Exception as exc:  # noqa: BLE001
-            lines.append(f"request failed: {exc}")
-            return []
-        if risky:
-            return [{"title": f"Risky HTTP methods enabled: {', '.join(risky)}",
-                     "severity": "medium", "category": "redteam", "standard_refs": [op.attack],
-                     "description": "Write/diagnostic HTTP verbs are reachable. TRACE enables "
-                     "Cross-Site Tracing; PUT/DELETE without auth allow tampering.",
-                     "evidence": "; ".join(risky), "remediation": op.hardening}]
-        lines.append("  no risky methods enabled ✓")
-        return [self._ok_finding(op, url, "Only safe HTTP methods exposed")]
-
-    def _cors(self, url, op, lines):
-        import httpx
-        evil = "https://evil.example.com"
-        try:
-            r = httpx.get(url, headers={"Origin": evil}, timeout=10, verify=False,
-                          follow_redirects=True)
-        except Exception as exc:  # noqa: BLE001
-            lines.append(f"request failed: {exc}")
-            return []
-        acao = r.headers.get("access-control-allow-origin", "")
-        acc = r.headers.get("access-control-allow-credentials", "")
-        lines.append(f"Origin: {evil} → ACAO: {acao or '(none)'}  ACAC: {acc or '(none)'}")
-        if acao == evil or acao == "*":
-            sev = "high" if (acao == evil and acc.lower() == "true") else "medium"
-            return [{"title": "CORS misconfiguration — origin reflected",
-                     "severity": sev, "category": "redteam", "standard_refs": [op.attack],
-                     "description": "The app reflects an arbitrary Origin in "
-                     "Access-Control-Allow-Origin" + (" with credentials" if acc.lower() == "true" else "") +
-                     ", enabling cross-site data theft.",
-                     "evidence": f"ACAO={acao}, ACAC={acc} for Origin {evil}",
-                     "remediation": op.hardening}]
-        lines.append("  origin not reflected ✓")
-        return [self._ok_finding(op, url, "CORS does not reflect arbitrary origins")]
-
     def _cookies(self, url, op, lines):
         import httpx
         try:
@@ -1112,77 +991,6 @@ class RedTeamModule(ScanModule):
                  "description": "No /.well-known/security.txt — reporters have no documented "
                  "contact for disclosing vulnerabilities (RFC 9116).",
                  "evidence": f"{base}/.well-known/security.txt → not found",
-                 "remediation": op.hardening}]
-
-    def _user_enum(self, url, op, lines):
-        import httpx
-        login = self._find_login(url)
-        if not login:
-            lines.append("no login endpoint discovered (set params.login_url)")
-            return [self._info_finding(op, url, "No login endpoint discovered to test.")]
-        real = (self.params.get("usernames") or ["admin"])[0]
-        bogus = "zz_nope_" + re.sub(r"\W", "", real)[:6]
-        out = {}
-        with httpx.Client(timeout=10, verify=False, follow_redirects=True) as c:
-            for label, u in (("valid-ish", real), ("bogus", bogus)):
-                t0 = time.monotonic()
-                r = self._post_login(c, login, u, "x")
-                out[label] = (r.status_code if r else "err",
-                              len(r.text) if r else 0, round((time.monotonic() - t0) * 1000))
-                lines.append(f"  {label} '{u}' → {out[label][0]} ({out[label][1]}b, {out[label][2]}ms)")
-        a, b = out.get("valid-ish"), out.get("bogus")
-        if a and b and (a[0] != b[0] or abs(a[1] - b[1]) > 40):
-            return [{"title": "Possible username enumeration",
-                     "severity": "medium", "category": "redteam", "standard_refs": [op.attack],
-                     "description": "Login responses differ for likely-valid vs bogus "
-                     "usernames (status/length), letting an attacker enumerate accounts.",
-                     "evidence": f"valid={a} vs bogus={b} at {login}",
-                     "remediation": op.hardening}]
-        lines.append("  responses indistinguishable ✓")
-        return [self._ok_finding(op, login, "Login does not appear to leak account existence")]
-
-    def _auth_lockout(self, url, op, lines):
-        """Capped credential test: a few FAKE-password logins to see if lockout fires."""
-        import httpx
-        from .redteam import AUTH_MAX_ATTEMPTS, AUTH_DUMMY_PASSWORDS
-        login = self.params.get("login_url") or self._find_login(url)
-        if not login:
-            lines.append("no login endpoint discovered (set params.login_url)")
-            return [self._info_finding(op, url,
-                    "No login endpoint discovered. Provide params.login_url to run the lockout test.")]
-        users = self.params.get("usernames") or ["admin"]
-        lines.append(f"login: {login} · users: {users} · ≤{AUTH_MAX_ATTEMPTS} attempts, DUMMY passwords")
-        codes, defended, attempts = {}, None, 0
-        with httpx.Client(timeout=10, verify=False, follow_redirects=True) as c:
-            for user in users:
-                for pw in AUTH_DUMMY_PASSWORDS:
-                    if attempts >= AUTH_MAX_ATTEMPTS:
-                        break
-                    attempts += 1
-                    r = self._post_login(c, login, user, pw)
-                    sc = r.status_code if r else "err"
-                    codes[sc] = codes.get(sc, 0) + 1
-                    body = (r.text.lower() if r else "")
-                    lines.append(f"  attempt {attempts}: {user} → {sc}")
-                    if sc == 429 or any(k in body for k in
-                                        ("locked", "too many", "try again later", "temporarily", "captcha")):
-                        defended = f"{sc} / lockout-or-throttle signal"
-                        break
-                if defended:
-                    break
-        if defended:
-            lines.append(f"  defense fired: {defended} after {attempts} attempts ✓")
-            return [{"title": "Account lockout / throttling enforced",
-                     "severity": "info", "category": "redteam", "standard_refs": [op.attack],
-                     "description": "The login enforced lockout/throttling/CAPTCHA within a "
-                     "few failed attempts — a positive auth-abuse control.",
-                     "evidence": f"defense after {attempts} attempts: {defended}; codes={codes}",
-                     "remediation": "Maintain lockout + alert on spray patterns."}]
-        return [{"title": "No account lockout / throttling observed",
-                 "severity": "medium", "category": "redteam", "standard_refs": [op.attack],
-                 "description": f"{attempts} failed logins produced no lockout, throttling, "
-                 "429, or CAPTCHA — the account is exposed to password spraying / brute-force.",
-                 "evidence": f"{attempts} attempts, codes={codes}, no defensive response",
                  "remediation": op.hardening}]
 
     def _soc_canary(self, url, op, lines):
@@ -1265,34 +1073,6 @@ class RedTeamModule(ScanModule):
         return [self._ok_finding(op, host, "SPF + DMARC present and enforcing")]
 
     # --- shared helpers -------------------------------------------------
-    def _find_login(self, url):
-        import httpx
-        base = re.match(r"^https?://[^/]+", url).group(0)
-        for p in ("/api/login", "/api/auth/login", "/login", "/auth/login",
-                  "/api/sessions", "/signin", "/users/sign_in"):
-            try:
-                r = httpx.request("POST", base + p, json={"username": "x", "password": "x"},
-                                  timeout=6, verify=False)
-                if r.status_code not in (404, 405, 501):
-                    return base + p
-            except Exception:
-                continue
-        return None
-
-    @staticmethod
-    def _post_login(c, login, user, pw):
-        """Best-effort login POST trying JSON then form, common field names."""
-        for payload, kind in (({"username": user, "password": pw}, "json"),
-                              ({"email": user, "password": pw}, "json"),
-                              ({"username": user, "password": pw}, "data")):
-            try:
-                r = c.request("POST", login, **({"json": payload} if kind == "json" else {"data": payload}))
-                if r.status_code != 415:
-                    return r
-            except Exception:
-                continue
-        return None
-
     @staticmethod
     def _ok_finding(op, where, msg):
         return {"title": f"✓ {msg}", "severity": "info", "category": "redteam",
@@ -1955,8 +1735,8 @@ class CVEScanModule(ScanModule):
     """CVE identification (DETECTION ONLY). Runs Nmap service detection + the built-in
     `vuln` NSE category to map a target's running versions to KNOWN, published CVEs,
     then reports them with references + remediation. It does NOT exploit anything —
-    weaponized exploitation remains an executable=False, documented-only red-team op
-    (`exploit_known_cve`). This is the same posture as the Metasploit module."""
+    detection only. This is the same posture as the Metasploit module (auxiliary /
+    version detection, never exploitation)."""
     name = "cve_scan"
     image = KALI_IMAGE
     pretty = "CVE identification (Nmap vuln NSE)"
@@ -2052,9 +1832,7 @@ _REGISTRY = {
     "api_test": ApiTestModule,
     "web_evidence": WebEvidenceModule,
     "app_analysis": AppAnalysisModule,
-    "redteam_op": RedTeamModule,
-    "redteam_placeholder": RedTeamPlaceholderModule,
-}
+    "redteam_op": RedTeamModule,}
 
 
 def get_module(name: str, params: dict | None = None) -> ScanModule:

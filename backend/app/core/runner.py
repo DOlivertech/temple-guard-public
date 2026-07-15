@@ -131,7 +131,7 @@ TARGET_MODULES = {
 
 
 def enqueue_target(session: Session, engagement: Engagement, target) -> list[ScanRun]:
-    """Queue the right tools for a structured target (web / app / api / red-team /
+    """Queue the right tools for a structured target (web / app / api / team-op /
     phone). Scope-gated like enqueue_standard — a target's value must be authorized
     in the engagement scope (invariant #1), so no path can scan an out-of-scope host."""
     assert_in_scope(engagement, target.value)

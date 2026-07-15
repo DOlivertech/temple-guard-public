@@ -16,9 +16,10 @@ core-module table. This file goes deep on the two things asked about most —
    creds — leave `TG_AWS_*` unset.
 4. **Container labels.** Keep `templeguard=true` + `tg.client/engagement/instance/
    role/run/target` on anything you `docker run` — the Control Center groups by them.
-5. **Non-destructive by default.** Offensive techniques stay `executable=False`
-   (documented + simulated) — see [wontdo.md](wontdo.md). Intrusive tools carry a
-   `warning`; keep `simulate()` in sync with every real parser.
+5. **Non-destructive by default.** This is defensive tooling — no offensive
+   techniques (exploitation, brute-force, flooding, C2). Intrusive scan tools carry
+   a `warning`; keep `simulate()` in sync with every real parser. See
+   [wontdo.md](wontdo.md).
 
 ---
 
@@ -159,9 +160,8 @@ Summarized here; full recipes in **[CLAUDE.md → "Extending the platform"](CLAU
 - **Standard (audit suite):** append a `Standard` to `core/standards.py` (data only).
 - **Scan module:** subclass `ScanModule` in `core/modules.py` (`image`, `command()`,
   `parse()`, `simulate()`), register in `_REGISTRY`. Set `warning` if it's intrusive.
-- **Red/Purple/Blue/SOC op:** append a `RedTeamOp` to `core/redteam.py`; executable
-  ops add a handler in `RedTeamModule._execute`, offensive ones stay `executable=False`
-  with a `refusal`.
+- **Blue/SOC op:** append a `RedTeamOp` (blue/SOC) to `core/redteam.py` and add a
+  bounded, read-only handler in `RedTeamModule._execute`. Defensive-only.
 
 ### Verify before handoff
 

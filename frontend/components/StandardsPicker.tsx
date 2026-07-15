@@ -5,9 +5,9 @@ import type { Standard } from "@/lib/types";
 
 const CAT_LABEL: Record<string, string> = {
   web: "Web Application", network: "Network / Infra", config: "Config Hardening",
-  compliance: "Regulatory / Compliance", app: "Application / Binary", redteam: "Red Team",
+  compliance: "Regulatory / Compliance", app: "Application / Binary",
 };
-const CAT_ORDER = ["web", "network", "config", "compliance", "app", "redteam"];
+const CAT_ORDER = ["web", "network", "config", "compliance", "app"];
 
 export default function StandardsPicker({ selected, onToggle }: {
   selected: string[];

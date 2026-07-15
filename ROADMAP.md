@@ -56,11 +56,11 @@ the rest is tracked here.
       a container; **Windows/macOS need OS-specific sandbox VMs** (big lift). Today
       app analysis is static-only.
 - [ ] Dedicated per-scan live output streaming endpoint (today: via container logs)
-- [x] **Red / Purple / Blue team operations** — ATT&CK-mapped catalog with full
-      explanations + hardening; ROE-window + authorization-confirm gating; safe ops
-      execute (bounded resilience probe, recon, posture), destructive ops simulated;
-      runs on the per-attack dashboard
-- [x] **Interactive report** — collapsible sections + Red Team / Hardening section
+- [x] **Blue / SOC team operations** — ATT&CK-mapped defensive catalog with full
+      explanations + hardening; ROE-window + authorization-confirm gating; every op
+      is bounded, read-only, and non-destructive (posture, TLS, cookies, security.txt,
+      SPF/DMARC, SOC canary); runs on the per-attack dashboard
+- [x] **Interactive report** — collapsible sections + Hardening section
 - [ ] Real destructive execution (volumetric/L7 DoS) — intentionally NOT built;
       requires a DDoS-testing provider + dedicated authorization
 - [ ] AuthN / RBAC / per-analyst audit logging

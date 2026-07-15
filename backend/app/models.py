@@ -65,7 +65,7 @@ class AuditTarget(SQLModel, table=True):
     value: str                               # URL or path/installer link
     os: Optional[str] = None                 # app only: linux | windows | macos
     operation: Optional[str] = None          # redteam only: catalog op id
-    team: Optional[str] = None               # redteam only: red | purple | blue
+    team: Optional[str] = None               # team op only: blue | soc
     # api only: {"endpoints": [...], "discover": bool}
     extra: dict = Field(default_factory=dict, sa_column=Column(JSON))
     label: Optional[str] = None

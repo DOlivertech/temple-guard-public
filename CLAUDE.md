@@ -210,21 +210,18 @@ In `core/modules.py`, subclass `ScanModule`:
   derived automatically by `_execution_info()` in `routes.py` from
   `runs_in_container` + `image` + provisioner — no extra work needed.
 
-### Add a Red/Purple/Blue/SOC operation
+### Add a Blue / SOC operation
 1. In `core/redteam.py`, append a `RedTeamOp` to `CATALOG`. Set `team`
-   (red|purple|blue|soc), MITRE `attack`, `aggressiveness`, and crucially:
-   - `executable=True` + `engine="in-process"` (bounded httpx script) **or**
-     `engine="kali"` (runs a real tool in the Kali image via the provisioner).
-   - `executable=False` + `engine="simulated"` + a `refusal` string for any
-     offensive technique we will not perform (it still produces the narrative +
-     hardening). **This is how we keep harsh techniques documented but un-shipped.**
-2. If executable, add a dispatch branch in `RedTeamModule._execute` (in
-   `modules.py`) and a handler. In-process handlers take `(url, op, lines)`;
-   Kali-engine handlers use `self._provisioner.run(KALI_IMAGE, [...], …)`.
-   Emit `_ok_finding`/`_info_finding` helpers for clean passes.
-3. Bounded means bounded: reuse `AUTH_MAX_ATTEMPTS`, `RESILIENCE_MAX_REQUESTS`,
-   etc. from `redteam.py`. Operator-supplied params (e.g. `login_url`,
-   `usernames`) arrive via the target's `extra` dict.
+   (`blue` | `soc`), the MITRE `attack` / control mapping, `aggressiveness`
+   (`passive` | `low`), `executable=True`, and `engine="in-process"` (a bounded
+   httpx script) **or** `engine="kali"` (a real read-only tool in the Kali image
+   via the provisioner). Every op here is bounded, read-only, and non-destructive.
+2. Add a dispatch branch in `RedTeamModule._execute` (in `modules.py`) and a
+   handler. In-process handlers take `(url, op, lines)`; Kali-engine handlers use
+   `self._provisioner.run(KALI_IMAGE, [...], …)`. Emit `_ok_finding` /
+   `_info_finding` helpers for clean passes.
+3. Keep it bounded and non-destructive — no exploitation, brute-force, flooding,
+   or offensive automation. This catalog is defensive-only.
 
 ### Add a Playbook (ordered multi-step pipeline)
 Pure data — no other code. A playbook chains existing scan modules in order
@@ -253,5 +250,5 @@ same bounded modules as everything else.
 See [ROADMAP.md](ROADMAP.md). Done: real Docker scans (one Kali toolbox image),
 async execution, Kali instances + remote shell, Container Control Center, AWS scan
 provisioner (gated), topology, reports + server-side PDF (Chromium), desktop shell,
-API testing (discover + bounded request batches), bounded Red/Purple/Blue/SOC team
+API testing (discover + bounded request batches), bounded Blue/SOC team
 execution. Next: cloud shells/SSM consoles, K8s provisioner, RBAC/audit logging.

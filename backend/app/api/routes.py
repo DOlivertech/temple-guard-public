@@ -363,7 +363,7 @@ def create_target(eng_id: int, body: TargetCreate,
     if body.kind not in ("web", "app", "redteam", "api", "phone"):
         raise HTTPException(400, "kind must be 'web', 'app', 'redteam', 'api', or 'phone'")
     if body.kind == "redteam" and not redteam_mod.get_op(body.operation or ""):
-        raise HTTPException(400, f"unknown red-team operation '{body.operation}'")
+        raise HTTPException(400, f"unknown team operation '{body.operation}'")
     t = AuditTarget(engagement_id=eng_id, kind=body.kind, value=body.value.strip(),
                     os=body.os, operation=body.operation, team=body.team,
                     extra=body.extra or {}, label=body.label, last_status="idle")

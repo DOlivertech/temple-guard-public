@@ -15,12 +15,16 @@
 
 ---
 
-> ### ⚠️ Authorized use only
-> Temple Guard is built for **authorized** security testing by professionals
-> (pentesters, red/blue teams, internal security). It enforces per-client
-> authorization and per-engagement scope on **every** scan — it will refuse to
-> touch a target that isn't in writing. Only point it at environments you have
-> explicit, documented permission to test.
+> ### ⚠️ Defensive & authorized use only
+>
+> This is a tool for defensive work only. It is intended to scan you or your friends
+> OWN applications driven by ai or yourself. Be responsible with what you do and
+> remember that AI is NOT a substitute for a good cyber security person and good
+> practices. Enjoy 🛡️
+
+Temple Guard enforces per-client authorization and per-engagement scope on **every**
+scan — it refuses to touch a target that isn't in writing. Only point it at
+environments you own or have explicit, documented permission to test.
 
 ---
 
@@ -47,8 +51,8 @@ client-ready report. You can do this for several clients simultaneously.
 | **Web evidence capture (Playwright)** | Drives a real browser to **screenshot** web targets and verify security headers live. Screenshots embed in findings and the client report — show clients exactly what was assessed and what's exposed. |
 | **Audit targets — web, API, phone & app** | Add a target and Temple Guard spins up a container to go after it. **Web:** point at a URL (localhost included — auto-remapped to `host.docker.internal` for container tools). **API:** discover + test endpoints. **Phone:** input a number for OSINT. **App:** give a local path or installer URL + pick the OS; a container fetches and statically dissects the artifact (embedded secrets, endpoints, bundled deps, signing). |
 | **Per-attack dashboard** | Every attack gets a live dashboard: status (running / completed / stopped), how long it's been running, the **tools run** with timestamps (click any tool for its live/stored logs), the **engaged container images** with live logs, the **findings**, a **topology map**, and a **Stop** button that kills the running containers on demand. |
-| **Red / Purple / Blue / SOC team ops** | A team-operations catalog mapped to MITRE ATT&CK, each with a full explanation, aggressiveness level, hardening guidance, and a `script` / `img·kali` engine badge. Launches require an authorized engagement, respect the **rules-of-engagement window**, and need explicit confirmation. Bounded ops execute — recon, HTTP-method/CORS/cookie audits, a hard-capped resilience probe, a **capped credential-lockout test** (fake passwords only), TLS posture + SPF/DMARC via real Kali tools, and a SOC detection canary. Offensive techniques (high-volume brute-force, exploitation, web-shell, flooding DoS, phishing, lateral movement, exfiltration) are **documented + simulated** with a stated refusal reason — never executed. Runs use the same per-attack dashboard. |
-| **Interactive report + hardening** | The report has collapsible finding sections (expand/collapse all) and a dedicated **Red Team & Hardening** section. The PDF is rendered server-side. |
+| **Blue / SOC team ops** | A defensive team-operations catalog mapped to MITRE ATT&CK, each with a full explanation, hardening guidance, and a `script` / `img·kali` engine badge. Launches require an authorized engagement, respect the **rules-of-engagement window**, and need explicit confirmation. Every op is **bounded, read-only, and non-destructive** — security-header & TLS posture, cookie flags, security.txt / disclosure readiness, SPF/DMARC via real Kali tools, and a SOC detection canary. Runs use the same per-attack dashboard. |
+| **Interactive report + hardening** | The report has collapsible finding sections (expand/collapse all) and a dedicated **Hardening** section. The PDF is rendered server-side. |
 | **Simulation fallback** | No Docker? The same flow produces realistic synthetic findings so the whole app is demoable with zero infrastructure. |
 | **Async, non-blocking scans** | Runs enqueue and execute on a background pool; the UI never blocks. Status flows queued → running → completed. |
 | **Real Kali instances + remote shell** | Spin up a Kali container per engagement and get a live in-browser terminal (a real `root` shell). |
@@ -141,16 +145,13 @@ stored output once it's done:
 
 ![Per-tool logs](docs/screenshots/attack-tool-logs.png)
 
-### Red / Purple / Blue / SOC team operations
-A team-ops catalog mapped to MITRE ATT&CK — each with a full explanation,
-aggressiveness, hardening, and a `script` / `img·kali` engine badge. Bounded ops
-execute (recon, CORS/method/cookie audits, a capped credential-lockout test, TLS
-posture + SPF/DMARC via real Kali tools, a SOC detection canary); offensive
-techniques are documented + simulated with a stated refusal reason. Launches
-require authorization confirmation and respect the rules-of-engagement window.
-
-![Team operations — Blue](docs/screenshots/team-ops-blue.png)
-![Team operations — SOC](docs/screenshots/team-ops-soc.png)
+### Blue / SOC team operations
+A defensive team-ops catalog mapped to MITRE ATT&CK — each with a full
+explanation, hardening, and a `script` / `img·kali` engine badge. Every op is
+bounded, read-only, and non-destructive: security-header & TLS posture, cookie
+flags, security.txt / disclosure readiness, SPF/DMARC via real Kali tools, and a
+SOC detection canary. Launches require authorization confirmation and respect the
+rules-of-engagement window.
 
 ### Topology
 Client → engagement → discovered-asset graph. Node color = worst finding
@@ -216,7 +217,7 @@ auditing a local web app + an app artifact (the "Self-Audit" engagement below).
                                                         │ docker run / exec
                                                         ▼
                                             Kali + tool containers
-                                            (nmap, nikto, ZAP, shells)
+                                            (nmap, nikto, nuclei, shells)
 ```
 
 The browser talks to a single origin — Next.js proxies `/api/*` to FastAPI.
@@ -494,9 +495,9 @@ straight to any of them.
 - **New playbook** → append a `Playbook` (ordered steps) to
   [`core/playbooks.py`](backend/app/core/playbooks.py). It runs its steps
   sequentially via Kali and shows up on the Playbooks page — data only.
-- **New team op** → append a `RedTeamOp` to
-  [`core/redteam.py`](backend/app/core/redteam.py); executable ops add a handler,
-  offensive ones stay `executable=False` with a `refusal` reason.
+- **New team op** → append a `RedTeamOp` (blue / SOC) to
+  [`core/redteam.py`](backend/app/core/redteam.py) and add a bounded, read-only
+  handler in `RedTeamModule`.
 - **New provisioner (cloud/K8s)** → implement the `Provisioner` interface in
   [`core/provisioner.py`](backend/app/core/provisioner.py).
 
@@ -521,11 +522,6 @@ that image (as Metasploit does). High-value tools **not yet wired**, by category
 | SAST | `returntocorp/semgrep` | Static analysis of source |
 | Cloud posture | Prowler, ScoutSuite | AWS/Azure/GCP misconfig audits (pairs with the cloud-VM roadmap) |
 | Kubernetes | `aquasec/kube-bench`, `aquasec/kube-hunter` | CIS k8s + cluster attack surface |
-| Adversary emulation | MITRE `caldera`, Atomic Red Team | ATT&CK technique execution / detection testing (purple) |
-| C2 (red, lab use) | Sliver, Havoc, Mythic | Command-and-control for *authorized lab* engagements only |
-
-Add real execution for the simulated red-team ops the same way — give the op an
-`image` + parser instead of the simulated finding.
 
 ## Ethical boundaries — what Temple Guard won't ship
 
@@ -542,9 +538,8 @@ operations with hardening guidance. If your engagement authorizes them, keep the
 - **Live phishing / smishing delivery** (sending real lures to real people).
 - **Malware, ransomware, droppers, persistence, rootkits**, and **AV/EDR/detection
   evasion** intended to defeat defenders.
-- **C2 tuned for stealth/evasion against non-consenting third parties** (the
-  frameworks above are fine for authorized labs; the platform won't auto-configure
-  them for covert ops).
+- **Command-and-control (C2) frameworks and stealth/evasion tooling** aimed at
+  non-consenting third parties.
 - **Supply-chain compromise** tooling.
 - **Destructive actions** on real systems (data deletion, defacement, lockout).
 - Anything targeting hosts **outside an authorized engagement's scope**.
@@ -585,7 +580,7 @@ temple-guard/
 │       └── seed.py           demo data
 ├── frontend/         Next.js app (App Router)
 │   ├── app/          dashboard, clients, engagements, topology,
-│   │                 consoles, containers, reports, red-team
+│   │                 consoles, containers, reports, team-ops
 │   ├── components/   Sidebar, Terminal, StandardsPicker, ui
 │   └── lib/          api client + types
 ├── desktop/          Electron shell
@@ -595,9 +590,11 @@ temple-guard/
 ```
 
 See [ROADMAP.md](ROADMAP.md) for status and what's planned (cloud shells, K8s,
-red-team execution, RBAC, server-side PDF).
+RBAC, server-side PDF).
 
 ---
 
-*Confidential security tooling. Use only within the bounds of written
-authorization.*
+## License
+
+Released under the [MIT License](LICENSE). This is **defensive tooling** — use it
+only on systems you own or are explicitly authorized in writing to test.

@@ -20,7 +20,7 @@ class Standard:
     id: str
     name: str
     framework: str
-    category: str                    # web | network | config | compliance | redteam
+    category: str                    # web | network | config | compliance | app
     description: str
     modules: list[SuiteModule]
     references: list[str] = field(default_factory=list)
@@ -317,18 +317,6 @@ CATALOG: list[Standard] = [
         "Run it from an engagement's Audit Targets panel.",
         modules=[SuiteModule("app_analysis", {"os": "linux"})],
         references=["https://owasp.org/www-project-mobile-app-security/"],
-    ),
-    # ── Red team (roadmap placeholder) ────────────────────────────────────
-    Standard(
-        id="redteam_adversary",
-        name="Red Team — Adversary Emulation (Coming Soon)",
-        framework="MITRE ATT&CK",
-        category="redteam",
-        description="Full-scope adversary emulation: phishing, C2, lateral movement, "
-        "and objective-based exploitation. Placeholder — not yet executable.",
-        modules=[SuiteModule("redteam_placeholder")],
-        references=["https://attack.mitre.org/"],
-        available=False,
     ),
 ]
 

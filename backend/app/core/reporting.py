@@ -126,9 +126,8 @@ _TEMPLATE = _env.from_string(r"""
   {% else %}<p class="muted">No findings recorded.</p>{% endfor %}
 
   {% if hardening %}
-  <h2>Red Team &amp; Hardening</h2>
-  <p class="muted">Aggressive-surface techniques assessed (some simulated, not executed)
-     and how to defend against each.</p>
+  <h2>Hardening</h2>
+  <p class="muted">Defensive posture checks assessed and how to harden against each.</p>
   {% for f in hardening %}{{ finding_card(f, loop.index, expand_all) }}{% endfor %}
   {% endif %}
 

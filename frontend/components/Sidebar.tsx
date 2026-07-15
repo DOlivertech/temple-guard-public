@@ -12,7 +12,7 @@ const NAV: { href: string; label: string; icon: string; badge?: string }[] = [
   { href: "/containers", label: "Control Center", icon: "▦" },
   { href: "/evidence", label: "Evidence", icon: "▣" },
   { href: "/reports", label: "Reports", icon: "▤" },
-  { href: "/red-team", label: "Team Ops", icon: "☠" },
+  { href: "/team-ops", label: "Team Ops", icon: "❖" },
   { href: "/playbooks", label: "Playbooks", icon: "▦" },
 ];
 
