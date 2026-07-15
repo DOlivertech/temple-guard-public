@@ -17,5 +17,4 @@ then loads it. Closing the window stops both processes.
 
 ### Packaging (later)
 `npm run dist` (electron-builder) produces an installer, but bundling the Python
-backend for distribution still needs to be wired up (PyInstaller or a sidecar) —
-tracked in the project ROADMAP.
+backend for distribution still needs to be wired up (PyInstaller or a sidecar).

@@ -76,7 +76,7 @@ class CloudVMProvisioner(Provisioner):
       4. Terminate the instance.
 
     Disabled unless boto3 is installed AND region/AMI/subnet are configured AND
-    credentials resolve. Untested without a live AWS account — see ROADMAP.
+    credentials resolve. Untested without a live AWS account.
     Bring-your-own-cloud (assume-role into the client account) is a config swap:
     create the boto3 session from assumed-role credentials instead of the default
     chain.

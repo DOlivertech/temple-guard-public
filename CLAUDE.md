@@ -247,7 +247,7 @@ same bounded modules as everything else.
 
 ## Status
 
-See [ROADMAP.md](ROADMAP.md). Done: real Docker scans (one Kali toolbox image),
+Done: real Docker scans (one Kali toolbox image),
 async execution, Kali instances + remote shell, Container Control Center, AWS scan
 provisioner (gated), topology, reports + server-side PDF (Chromium), desktop shell,
 API testing (discover + bounded request batches), bounded Blue/SOC team

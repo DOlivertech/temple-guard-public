@@ -532,12 +532,10 @@ temple-guard/
 │   └── lib/          api client + types
 ├── desktop/          Electron shell
 ├── run.sh            one-command local launcher
-├── ROADMAP.md        what's done / what's next
 └── CLAUDE.md         guidance for AI agents working in this repo
 ```
 
-See [ROADMAP.md](ROADMAP.md) for status and what's planned (cloud shells, K8s,
-RBAC, server-side PDF).
+Planned next: cloud shells / SSM consoles, a K8s provisioner, and RBAC / audit logging.
 
 ---
 
