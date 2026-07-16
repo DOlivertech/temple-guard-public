@@ -185,13 +185,13 @@ colourful report or writes markdown. Nothing it does exploits, floods, or
 brute-forces; a single `GET` per check (plus one `OPTIONS`).
 
 ### Install
+`temple-guard` installs with **pipx** (isolated + on your PATH). Grab the wheel from
+this repo's **Releases**, then:
 ```bash
-pipx install temple-guard            # isolated install (recommended)
-# or
-pip install temple-guard
-# or grab the wheel from this repo's Releases:
-pipx install ./temple_guard-0.1.0-py3-none-any.whl
+pipx install ./temple_guard-0.1.0-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
 ```
+New to pipx, or on **macOS / Windows**? [`cli/README.md`](cli/README.md) has the
+per-platform setup (installing pipx, `ensurepath`).
 
 ### Use
 ```bash
