@@ -180,15 +180,19 @@ FastAPI · SQLModel/SQLite (Postgres-ready) · Docker · boto3.
 Want a fast, read-only remediation report for **your own** app without standing up
 the full platform? The bundled **`temple-guard`** CLI ([`cli/`](cli/)) runs bounded,
 non-intrusive checks — security headers, TLS/certificate, cookie flags, information
-disclosure, exposed sensitive files, and risky HTTP methods — then prints a
-colourful report or writes markdown. Nothing it does exploits, floods, or
-brute-forces; a single `GET` per check (plus one `OPTIONS`).
+disclosure, exposed sensitive files, risky HTTP methods, and SPF/DMARC email posture —
+then prints a colourful report or writes HTML / PDF / markdown / JSON. With Docker it can
+also merge real recon tools (whatweb, wafw00f, testssl, nmap, nuclei, nikto) into the same
+report. Nothing it does exploits, floods, or brute-forces; a single `GET` per check (plus
+one `OPTIONS`).
+
+![temple-guard deep scan report](cli/docs/screenshots/cli-deep-scan.png)
 
 ### Install
 `temple-guard` installs with **pipx** (isolated + on your PATH). Grab the wheel from
 this repo's **Releases**, then:
 ```bash
-pipx install ./temple_guard-0.4.1-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
+pipx install ./temple_guard-0.5.1-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
 ```
 New to pipx, or on **macOS / Windows**? [`cli/README.md`](cli/README.md) has the
 per-platform setup (installing pipx, `ensurepath`).
@@ -198,7 +202,7 @@ per-platform setup (installing pipx, `ensurepath`).
 temple-guard                                               # interactive, colourful session (all options)
 temple-guard scan https://your-app.example.com             # colourful terminal report
 temple-guard scan https://your-app.example.com -v          # verbose: each check + finding, live
-temple-guard scan https://your-app.example.com --deep      # + Docker tools (testssl, nmap, nuclei)
+temple-guard scan https://your-app.example.com --deep      # + Docker tools (whatweb, wafw00f, testssl, nmap, nuclei)
 temple-guard scan https://your-app.example.com --dry-run   # list the checks, send nothing
 temple-guard scan https://your-app.example.com -o report.html # collapsible HTML report (Print → PDF)
 temple-guard scan https://your-app.example.com -o report.pdf  # branded PDF (also .md / .json)

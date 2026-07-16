@@ -108,6 +108,11 @@ temple-guard version
 | `.md`   | Markdown (table + evidence) |
 | `.json` | Machine-readable findings |
 
+The `.html` report is a self-contained, collapsible page styled like the platform's —
+expand/collapse findings, and **Print / Save PDF** for a polished PDF:
+
+![temple-guard HTML report](docs/screenshots/cli-html-report.png)
+
 `-v / --verbose` streams each check and every finding as it happens. The scan exits
 non-zero when a **HIGH** finding is present, so it slots straight into CI.
 
