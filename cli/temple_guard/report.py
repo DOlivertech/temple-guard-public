@@ -19,7 +19,8 @@ SEV_STYLE = {"high": "bold #f87171", "medium": "bold #fbbf24",
 SEV_LABEL = {"high": "HIGH", "medium": "MED", "low": "LOW", "info": "INFO"}
 CAT_ICON = {"transport": "🔒", "headers": "📋", "cookies": "🍪",
             "disclosure": "📢", "exposure": "📂", "methods": "🔧",
-            "email": "📧", "tls": "🔐", "ports": "🔌", "templates": "🎯"}
+            "email": "📧", "tls": "🔐", "ports": "🔌", "templates": "🎯",
+            "web": "🌐", "waf": "🛡️", "tech": "🧩"}
 
 
 def _summary_bar(result: ScanResult) -> Text:

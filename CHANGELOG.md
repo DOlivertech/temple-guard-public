@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.5.0] — 2026-07-16
+### Added
+- **Self-update** — `temple-guard update` pulls the newest source from the git repo and
+  reinstalls (pipx- and pip-aware, and editable-aware); `temple-guard update --check` just
+  reports whether a newer version exists. Added an **Update** entry to the interactive menu.
+- **Three more Docker recon tools**, each merged into the same unified report: **`nikto`**
+  (web-server misconfig / dangerous files / admin paths / outdated software), **`wafw00f`**
+  (WAF/CDN fingerprint — flags apps with *no* WAF in front), and **`whatweb`** (tech-stack +
+  software-version disclosure). `--deep` now runs the quick recon set
+  (`whatweb, wafw00f, testssl, nmap, nuclei`); `nikto` is opt-in via `--tools nikto`
+  because it's slow and noisy.
+- **Per-tool explainers** — picking a tool (in the interactive menu, or `temple-guard tool
+  <name>` with no arguments) now shows a panel with **what it is, how to use it, its risks,
+  and the key flags** — including nmap's full usual argument set.
+### Fixed
+- **Docker → host connectivity on Docker Desktop.** `host.docker.internal` dual-stacks to an
+  unreachable IPv6 (`fdXX::254`) alongside the good IPv4, so IPv6-preferring tools
+  (whatweb/wafw00f) failed with "Network unreachable". temple-guard now resolves and pins the
+  host's **numeric IPv4** for `localhost` / `host.docker.internal` targets.
+
 ## [0.4.1] — 2026-07-16
 ### Added
 - **`temple-guard tool <name> [args…]`** — run a Docker tool with its **full argument set**,

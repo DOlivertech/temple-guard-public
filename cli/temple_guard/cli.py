@@ -5,7 +5,12 @@ explicit written permission to test.
 """
 from __future__ import annotations
 
+import importlib.metadata as _ilm
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -241,9 +246,9 @@ def scan(
     report: Path = typer.Option(None, "--report", "-o",
                                 help="Write a report; format follows the extension (.html/.pdf/.md/.json)."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show each check + finding live as it runs."),
-    deep: bool = typer.Option(False, "--deep", help="Also run the Docker defensive tools (testssl, nmap, nuclei)."),
+    deep: bool = typer.Option(False, "--deep", help="Also run the Docker recon tools (whatweb, wafw00f, testssl, nmap, nuclei)."),
     with_tools: str = typer.Option(None, "--tools", "-t",
-                                   help="Comma-list of Docker tools to also run: testssl,nmap,nuclei."),
+                                   help="Comma-list of Docker tools to also run: whatweb,wafw00f,testssl,nmap,nuclei,nikto."),
     json_out: bool = typer.Option(False, "--json", help="Emit findings as JSON (no styling)."),
     no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
 ):
@@ -292,17 +297,44 @@ def shell(image: str = typer.Option(None, "--image", help="Container image (defa
     raise typer.Exit(code=tools.kali_shell(image))
 
 
+def _describe_tool(key: str) -> None:
+    """Show a full explainer for one tool — what it is, how to use it, its risks, key flags."""
+    from rich.panel import Panel
+    t = tools.TOOLS[key]
+    body = Text()
+    body.append("What   ", style=f"bold {BLUE}")
+    body.append(t.what + "\n\n", style="white")
+    body.append("Use\n", style=f"bold {BLUE}")
+    for ex in t.usage.split("\n"):
+        body.append("  $ ", style="dim")
+        body.append(ex + "\n", style="#e2e8f0")
+    body.append("\n")
+    body.append("Risk   ", style="bold #fbbf24")
+    body.append(t.risk + "\n\n", style="#fcd34d")
+    body.append("Flags  ", style=f"bold {PURPLE}")
+    body.append(t.flags, style="dim")
+    console.print(Panel(
+        body, padding=(1, 2), border_style=BLUE, title_align="left",
+        title=Text.assemble((f" {t.name} ", "bold white"), (f"  [{t.image}]", "dim")),
+        subtitle=Text(" read-only container · authorized targets only ", style="dim")))
+
+
 def _print_tool_usage() -> None:
     console.print(Text("\nRun a Kali tool in its own container with YOUR arguments:",
                        style=f"bold {PURPLE}"))
     console.print(Text.assemble(("  temple-guard tool ", f"bold {BLUE}"), ("<tool> [args…]", "dim")))
-    console.print(Text("\nTools (each pulls + runs its own image):", style="dim"))
+    console.print(Text("\nTools (each spins up + runs its own image):", style="dim"))
     for key, t in tools.TOOLS.items():
-        console.print(Text.assemble((f"  {key.ljust(9)}", f"bold {BLUE}"), (t.desc, "dim")))
+        console.print(Text.assemble((f"  {key.ljust(9)}", f"bold {BLUE}"), (t.desc, "white")))
+    console.print(Text.assemble(
+        ("\n  temple-guard tool ", f"bold {BLUE}"), ("<tool>", "bold white"),
+        ("   (no args)  →  full explainer: what it is · how to use it · risks · flags", "dim")))
     console.print(Text("\nExamples (full tool flags are passed straight through):", style="dim"))
     for ex in ("temple-guard tool nmap -h                                  # nmap's own full help",
                "temple-guard tool nmap -sV -p 1-1000 host.docker.internal",
-               "temple-guard tool nmap -A -T4 -Pn scanme.nmap.org",
+               "temple-guard tool nikto -h http://host.docker.internal:8081",
+               "temple-guard tool wafw00f https://example.com",
+               "temple-guard tool whatweb https://example.com",
                "temple-guard tool testssl --severity LOW example.com",
                "temple-guard tool nuclei -u https://example.com -tags cve,exposure"):
         console.print(Text.assemble(("  ", ""), (ex, "white")))
@@ -312,25 +344,30 @@ def _print_tool_usage() -> None:
 
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
              add_help_option=False)
-def tool(ctx: typer.Context, name: str = typer.Argument(None, help="testssl | nmap | nuclei")):
+def tool(ctx: typer.Context,
+         name: str = typer.Argument(None, help="testssl | nmap | nuclei | nikto | wafw00f | whatweb")):
     """Run a Kali tool in its container with YOUR arguments — the tool's full flag set.
 
     Examples:
       temple-guard tool nmap -sV -p 1-1000 host.docker.internal
       temple-guard tool nmap -h                 (nmap's own help)
+      temple-guard tool wafw00f https://example.com
       temple-guard tool nuclei -u https://example.com -tags cve
     """
     if not name or name in ("-h", "--help") or name not in tools.TOOLS:
         _print_tool_usage()
         raise typer.Exit(0 if name in (None, "-h", "--help") else 1)
+    args = list(ctx.args)
+    if not args:
+        # a bare `tool <name>` is a request to learn about it — show the explainer
+        _describe_tool(name)
+        console.print(f"[dim]Add arguments to run it — copy one of the examples above "
+                      f"(or `temple-guard tool {name} -h` for the tool's own help).[/]")
+        raise typer.Exit(0)
     ok, why = tools.docker_available()
     if not ok:
         console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
         raise typer.Exit(1)
-    args = list(ctx.args)
-    if not args:
-        console.print(f"[dim]Provide arguments for {name} (or `temple-guard tool {name} -h` for its help).[/]")
-        raise typer.Exit(0)
     _authz_notice()
     console.print(Text.assemble((f"⚙ {name} ", f"bold {PURPLE}"), (" ".join(args), "dim"),
                                 (f"   [{tools.TOOLS[name].image}]", "dim")))
@@ -340,15 +377,140 @@ def tool(ctx: typer.Context, name: str = typer.Argument(None, help="testssl | nm
     raise typer.Exit(rc)
 
 
+# ── self-update: pull the newest temple-guard from its git repo ─────────────
+DEFAULT_UPDATE_REPO = "https://github.com/DOlivertech/temple-guard-public.git"
+_MANAGED_CHECKOUT = Path.home() / ".local" / "share" / "temple-guard" / "repo"
+
+
+def _run_cmd(cmd: list, cwd=None, timeout: int = 600) -> tuple:
+    # GIT_TERMINAL_PROMPT=0 so a private/auth'd remote fails fast instead of hanging on a prompt
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {timeout}s"
+    except FileNotFoundError as exc:
+        return 127, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return 1, str(exc)
+
+
+def _pkg_source_checkout():
+    """If temple-guard is running from a git checkout, return its repo root (else None)."""
+    try:
+        here = Path(__file__).resolve()
+    except Exception:  # pragma: no cover
+        return None
+    for parent in here.parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def _is_editable_install() -> bool:
+    try:
+        durl = _ilm.distribution("temple-guard").read_text("direct_url.json")
+        return bool(durl and json.loads(durl).get("dir_info", {}).get("editable"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _src_version(cli_dir: Path):
+    try:
+        text = (cli_dir / "temple_guard" / "__init__.py").read_text()
+        m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
+        return m.group(1) if m else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _reinstall_cmd(cli_dir: Path) -> list:
+    editable = _is_editable_install()
+    if shutil.which("pipx"):
+        return ["pipx", "install", "--force"] + (["--editable"] if editable else []) + [str(cli_dir)]
+    return ([sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
+            + (["-e"] if editable else []) + [str(cli_dir)])
+
+
+def _do_update(check: bool = False, repo: str = DEFAULT_UPDATE_REPO, ref: str = "main") -> int:
+    """Source the repo and reinstall. Returns an exit code."""
+    console.print(Text.assemble(("temple-guard ", f"bold {PURPLE}"), (f"v{__version__}", "white"),
+                                ("  ·  checking for updates…", "dim")))
+    if not shutil.which("git"):
+        console.print("[#f87171]✗ git not found — install git to self-update "
+                      "(or grab a build from the Releases page).[/]")
+        return 1
+
+    checkout = _pkg_source_checkout()
+    if checkout:
+        cli_dir = (checkout / "cli") if (checkout / "cli").exists() else checkout
+        console.print(Text.assemble(("  source  ", "dim"), (str(checkout), f"{BLUE}"), ("  (local checkout)", "dim")))
+        rc, out = _run_cmd(["git", "pull", "--ff-only"], cwd=str(checkout))
+        last = out.splitlines()[-1] if out else ""
+        if rc != 0:
+            console.print(Text.assemble(("  ⚠ git pull skipped: ", "bold #fbbf24"), (last[:160] or "no upstream", "dim")))
+            console.print("[dim]  Reinstalling from the current local source instead.[/]")
+        else:
+            console.print(f"[dim]  {last or 'already up to date'}[/]")
+    else:
+        cli_dir = _MANAGED_CHECKOUT / "cli"
+        console.print(Text.assemble(("  source  ", "dim"), (repo, f"{BLUE}"), (f"  ({ref})", "dim")))
+        if (_MANAGED_CHECKOUT / ".git").exists():
+            rc, out = _run_cmd(["git", "fetch", "origin", ref], cwd=str(_MANAGED_CHECKOUT))
+            if rc == 0:
+                rc, out = _run_cmd(["git", "reset", "--hard", f"origin/{ref}"], cwd=str(_MANAGED_CHECKOUT))
+        else:
+            _MANAGED_CHECKOUT.parent.mkdir(parents=True, exist_ok=True)
+            rc, out = _run_cmd(["git", "clone", "--depth", "1", "--branch", ref, repo, str(_MANAGED_CHECKOUT)])
+        if rc != 0:
+            console.print(Text.assemble(("  ✗ could not fetch the repo: ", "bold #f87171"), (out[:300], "dim")))
+            console.print("[dim]  If the repo is private, clone it yourself and run "
+                          "`pipx install --force ./cli` from inside it.[/]")
+            return 1
+
+    target = _src_version(cli_dir) or "?"
+    if target != "?" and target == __version__:
+        console.print(Text.assemble(("  ✓ already on the latest version ", "bold #4ade80"), (f"(v{__version__}).", "dim")))
+        return 0
+
+    console.print(Text.assemble(("  update  ", "dim"), (f"v{__version__} → v{target}", "bold white")))
+    if check:
+        console.print("[dim]  --check only; nothing installed. Run `temple-guard update` to apply.[/]")
+        return 0
+
+    cmd = _reinstall_cmd(cli_dir)
+    console.print(Text.assemble(("  installing  ", "dim"), (" ".join(cmd[:2]) + " …", f"{BLUE}")))
+    with console.status(f"[{PURPLE}]reinstalling temple-guard…", spinner="dots"):
+        rc, out = _run_cmd(cmd)
+    if rc != 0:
+        console.print(Text.assemble(("  ✗ reinstall failed: ", "bold #f87171"), (out[-400:], "dim")))
+        return 1
+    console.print(Text.assemble(("\n✓ updated to ", "bold #4ade80"), (f"temple-guard v{target}", "bold white")))
+    console.print("[dim]  Open a new shell (or re-run) to pick it up — confirm with `temple-guard version`.[/]")
+    return 0
+
+
+@app.command()
+def update(
+    check: bool = typer.Option(False, "--check", help="Only report whether a newer version exists; install nothing."),
+    repo: str = typer.Option(DEFAULT_UPDATE_REPO, "--repo", help="Git repo to pull from if not run from a checkout."),
+    ref: str = typer.Option("main", "--ref", help="Branch or tag to update to."),
+):
+    """Update temple-guard to the newest version from its git repo (source → reinstall)."""
+    raise typer.Exit(_do_update(check=check, repo=repo, ref=ref))
+
+
 # menu shown by the interactive entry point: (key, label, description)
 _MENU = [
     ("1", "Scan a target", "the read-only native checks"),
-    ("2", "Deep scan", "native checks + Docker tools (testssl, nmap, nuclei)"),
-    ("3", "Run a tool", "one Kali tool with your own arguments"),
+    ("2", "Deep scan", "native checks + Docker recon tools (whatweb, wafw00f, testssl, nmap, nuclei)"),
+    ("3", "Run a tool", "one Kali tool with your own arguments (with a full explainer)"),
     ("4", "Kali shell", "interactive shell in a Kali container"),
     ("5", "Dry run", "list the checks — send nothing"),
     ("6", "What it checks", "the checks temple-guard runs"),
     ("7", "Help", "commands & flags"),
+    ("8", "Update", "pull the newest temple-guard from its repo"),
     ("q", "Quit", ""),
 ]
 
@@ -356,13 +518,17 @@ _COMMANDS = [
     ("temple-guard", "this interactive menu"),
     ("temple-guard scan <url>", "native read-only checks + report"),
     ("temple-guard scan <url> -v", "verbose — each check + finding, live"),
-    ("temple-guard scan <url> --deep", "also run Docker tools (testssl, nmap, nuclei)"),
-    ("temple-guard scan <url> --tools nmap", "run specific Docker tools"),
+    ("temple-guard scan <url> --deep", "add the Docker recon tools (whatweb, wafw00f, testssl, nmap, nuclei)"),
+    ("temple-guard scan <url> --tools nmap,nikto", "run specific Docker tools"),
     ("temple-guard scan <url> --dry-run", "list the checks, send nothing"),
     ("temple-guard scan <url> -o report.html", "save a report (.html / .pdf / .md / .json)"),
+    ("temple-guard tool", "list the Docker tools"),
+    ("temple-guard tool <name>", "full explainer for a tool (what · how · risks · flags)"),
     ("temple-guard tool nmap <args>", "run a Kali tool with your own flags (full arg set)"),
     ("temple-guard tool nmap -h", "the tool's own help / full options"),
     ("temple-guard shell", "interactive Kali shell in a container"),
+    ("temple-guard update", "update to the newest version from the repo"),
+    ("temple-guard update --check", "check for a newer version, install nothing"),
     ("temple-guard version", "print the version"),
     ("temple-guard --help", "full command reference"),
 ]
@@ -421,8 +587,12 @@ def _tool_flow() -> None:
         return
     console.print("[dim]Tools:[/] " + ", ".join(f"[{BLUE}]{k}[/]" for k in tools.TOOLS))
     name = Prompt.ask("Which tool", choices=list(tools.TOOLS), default="nmap")
-    console.print(f"[dim]Enter {name} args (e.g. [/][{BLUE}]-sV -p 1-1000 host.docker.internal[/][dim]); blank = its help.[/]")
-    argstr = Prompt.ask(f"{name} args", default="-h")
+    _describe_tool(name)
+    argstr = Prompt.ask(f"[{BLUE}]{name} args[/] [dim](copy an example above; blank to cancel)[/]",
+                        default="").strip()
+    if not argstr:
+        console.print("[dim]No args — back to the menu.[/]")
+        return
     _authz_notice()
     with console.status(f"[{PURPLE}]running {name}…", spinner="dots"):
         rc, out = tools.run_raw(name, argstr.split())
@@ -440,7 +610,8 @@ def interactive() -> None:
         for key, label, desc in _MENU:
             console.print(Text.assemble((f"  {key}  ", f"bold {BLUE}"),
                                         (label.ljust(16), "bold white"), (desc, "dim")))
-        choice = Prompt.ask(f"[{BLUE}]Choose[/]", choices=["1", "2", "3", "4", "5", "6", "7", "q"], default="1")
+        choice = Prompt.ask(f"[{BLUE}]Choose[/]",
+                            choices=["1", "2", "3", "4", "5", "6", "7", "8", "q"], default="1")
 
         if choice == "q":
             console.print("[dim]Bye — stay safe out there.[/]")
@@ -465,6 +636,9 @@ def interactive() -> None:
             _print_checks()
         elif choice == "7":
             _print_commands()
+        elif choice == "8":
+            console.print()
+            _do_update()
 
 
 @app.command()

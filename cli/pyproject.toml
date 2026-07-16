@@ -1,6 +1,6 @@
 [project]
 name = "temple-guard"
-version = "0.4.1"
+version = "0.5.0"
 description = "Scan a web app you own and get a remediation report — interactive or agent-driven."
 readme = "README.md"
 requires-python = ">=3.9"
