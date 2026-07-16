@@ -208,6 +208,29 @@ Smoke endpoints: `GET /api/health`, `/api/dashboard`, `/api/standards`,
 - **Deleting a target cascades** its own scans + findings (by `target_id`); suite scans
   that merely share the hostname are preserved.
 
+## The `temple-guard` CLI (`cli/`)
+
+A self-contained CLI, **independent of the platform** (no backend/DB) — `pipx`-installable,
+scans a web app you own. Full overview in [CLAUDE.md](CLAUDE.md) → "The `temple-guard` CLI".
+Dev quick-reference:
+
+- **Run from source:** `pipx install --force --editable cli` → `temple-guard`. Bump the
+  version in **both** `cli/pyproject.toml` and `cli/temple_guard/__init__.py`. Byte-compile
+  with `python -m py_compile cli/temple_guard/*.py`.
+- **Layout:** `cli.py` (Typer commands + interactive menu + `TOOL_GUIDE` guided prompts),
+  `checks.py` (`CHECK_PLAN` + `scan()` events), `tools.py` (`TOOLS`, `run_tool`/`run_raw`/
+  `kali_shell`, host-IPv4 remap + dry-run command preview), `report.py` (render + HTML/PDF/MD).
+- **Add a Docker tool:** append a `Tool(...)` to `tools.TOOLS` (image, `argv` builder,
+  `parse`→`[Finding]`, and the `what/usage/risk/flags` strings), add it to `DEFENSIVE` if it
+  belongs under `--deep`, and add a `TOOL_GUIDE[name]` entry in `cli.py` for the guided flow.
+  Confirm the image exists with a manual `docker run --rm <image> …` first.
+- **Add a native check:** add `(category, name, desc)` to `CHECK_PLAN` and a check fn that
+  emits findings via the `add`/`on_event` callback in `checks.py`; give a new category a
+  `CAT_ICON` in `report.py`.
+- **Verify:** `temple-guard tool <name> --dry-run <args>` builds the docker command without
+  running it; a real tool / `--deep` run needs Docker. `temple-guard scan <url> --dry-run`
+  lists the native checks.
+
 ## Releasing (`temple-guard` CLI)
 
 Releases are tagged `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **Every release

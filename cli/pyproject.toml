@@ -21,7 +21,7 @@ dependencies = [
 temple-guard = "temple_guard.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/DOlivertech/temple-guard"
+Homepage = "https://github.com/DOlivertech/temple-guard-public"
 
 [build-system]
 requires = ["hatchling"]
