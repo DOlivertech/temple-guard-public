@@ -333,22 +333,24 @@ def shell(image: str = typer.Option(None, "--image", help="Container image (defa
     raise typer.Exit(code=tools.kali_shell(image))
 
 
-def _describe_tool(key: str) -> None:
-    """Show a full explainer for one tool — what it is, how to use it, its risks, key flags."""
+def _describe_tool(key: str, brief: bool = False) -> None:
+    """Show an explainer for one tool. Full = what/how/risks/flags (the CLI reference);
+    brief = just what + risk (the interactive flow, which then asks guided questions)."""
     from rich.panel import Panel
     t = tools.TOOLS[key]
     body = Text()
     body.append("What   ", style=f"bold {BLUE}")
-    body.append(t.what + "\n\n", style="white")
-    body.append("Use\n", style=f"bold {BLUE}")
-    for ex in t.usage.split("\n"):
-        body.append("  $ ", style="dim")
-        body.append(ex + "\n", style="#e2e8f0")
-    body.append("\n")
-    body.append("Risk   ", style="bold #fbbf24")
-    body.append(t.risk + "\n\n", style="#fcd34d")
-    body.append("Flags  ", style=f"bold {PURPLE}")
-    body.append(t.flags, style="dim")
+    body.append(t.what, style="white")
+    if not brief:
+        body.append("\n\nUse", style=f"bold {BLUE}")
+        for ex in t.usage.split("\n"):
+            body.append("\n  $ ", style="dim")
+            body.append(ex, style="#e2e8f0")
+    body.append("\n\nRisk   ", style="bold #fbbf24")
+    body.append(t.risk, style="#fcd34d")
+    if not brief:
+        body.append("\n\nFlags  ", style=f"bold {PURPLE}")
+        body.append(t.flags, style="dim")
     console.print(Panel(
         body, padding=(1, 2), border_style=BLUE, title_align="left",
         title=Text.assemble((f" {t.name} ", "bold white"), (f"  [{t.image}]", "dim")),
@@ -624,6 +626,105 @@ def _shell_flow(dry: bool = False) -> None:
     tools.kali_shell()
 
 
+# Guided prompts for the interactive "Run a tool" flow: the common options become
+# questions (choices / yes-no) instead of raw flags, and the command is assembled for you.
+# Each step is either a "choices" list of (label, argv-tokens) or a yes/no "flag".
+TOOL_GUIDE = {
+    "whatweb": {
+        "base": ["--color=never"],
+        "target": {"prompt": "Target URL", "arg": ["{}"]},
+        "steps": [
+            {"ask": "Aggression", "choices": [
+                ("passive — default", []), ("more requests (-a 3)", ["-a", "3"]), ("heavy (-a 4)", ["-a", "4"])]},
+            {"ask": "Verbose output?", "flag": ["-v"], "default": False},
+        ],
+    },
+    "wafw00f": {
+        "base": [],
+        "target": {"prompt": "Target URL", "arg": ["{}"]},
+        "steps": [
+            {"ask": "Test every WAF signature (slower, thorough)?", "flag": ["-a"], "default": False},
+            {"ask": "Verbose output?", "flag": ["-v"], "default": False},
+        ],
+    },
+    "nmap": {
+        "base": ["-Pn"],
+        "target": {"prompt": "Target host", "arg": ["{}"]},
+        "steps": [
+            {"ask": "Detection", "choices": [
+                ("service + version (-sV)", ["-sV"]), ("aggressive: OS + default scripts (-A)", ["-A"])]},
+            {"ask": "Ports", "choices": [
+                ("top 200 — default", ["--top-ports", "200"]), ("top 1000", ["--top-ports", "1000"]),
+                ("range 1-1000", ["-p", "1-1000"]), ("all 65535 (slow)", ["-p-"])]},
+            {"ask": "Faster timing (-T4)?", "flag": ["-T4"], "default": True},
+        ],
+    },
+    "testssl": {
+        "base": ["--quiet", "--color", "0"],
+        "target": {"prompt": "Target host[:port]", "arg": ["{}"]},
+        "steps": [
+            {"ask": "Scope", "choices": [
+                ("full posture — default", []), ("protocols only (-p)", ["-p"]), ("vulnerabilities only (-U)", ["-U"])]},
+            {"ask": "Minimum severity to report", "choices": [
+                ("all — default", []), ("LOW and up", ["--severity", "LOW"]),
+                ("MEDIUM and up", ["--severity", "MEDIUM"]), ("HIGH and up", ["--severity", "HIGH"])]},
+        ],
+    },
+    "nuclei": {
+        "base": ["-silent"],
+        "target": {"prompt": "Target URL", "arg": ["-u", "{}"]},
+        "steps": [
+            {"ask": "Severity", "choices": [
+                ("low → critical — default", ["-severity", "low,medium,high,critical"]),
+                ("high + critical only", ["-severity", "high,critical"]), ("all severities", [])]},
+            {"ask": "Templates", "choices": [
+                ("misconfig + exposure — default", ["-tags", "misconfig,exposure,tech"]),
+                ("known CVEs", ["-tags", "cve"]), ("everything", [])]},
+        ],
+    },
+    "nikto": {
+        "base": ["-ask", "no"],
+        "target": {"prompt": "Target URL", "arg": ["-h", "{}"]},
+        "steps": [
+            {"ask": "Max scan time", "choices": [
+                ("3 min — default", ["-maxtime", "180"]), ("1 min (quick)", ["-maxtime", "60"]), ("no limit", [])]},
+            {"ask": "Force SSL/TLS (-ssl)?", "flag": ["-ssl"], "default": False},
+        ],
+    },
+}
+
+
+def _ask_choice(prompt: str, choices: list):
+    """Numbered pick from (label, tokens) pairs; default is the first. Returns the tokens."""
+    console.print(Text(f"\n{prompt}", style=f"bold {BLUE}"))
+    for i, (label, _tokens) in enumerate(choices, 1):
+        console.print(Text.assemble((f"  {i}  ", f"bold {BLUE}"), (label, "white")))
+    idx = Prompt.ask("Pick", choices=[str(i) for i in range(1, len(choices) + 1)], default="1")
+    return choices[int(idx) - 1][1]
+
+
+def _guided_tool_args(name: str):
+    """Ask the tool's guided questions and assemble its argv. Returns the list, or None if cancelled."""
+    guide = TOOL_GUIDE.get(name)
+    if not guide:  # fallback for any tool without a guide — free-form flags
+        s = Prompt.ask(f"[{BLUE}]{name} args[/] [dim](blank to cancel)[/]", default="").strip()
+        return s.split() if s else None
+    tgt = guide["target"]
+    val = Prompt.ask(f"[{BLUE}]{tgt['prompt']}[/] [dim](your own / authorized)[/]").strip()
+    if not val:
+        return None
+    argv = list(guide.get("base", []))
+    for step in guide["steps"]:
+        if "choices" in step:
+            argv += _ask_choice(step["ask"], step["choices"])
+        elif Confirm.ask(step["ask"], default=step.get("default", False)):
+            argv += step["flag"]
+    extra = Prompt.ask("[dim]Extra flags (optional — blank for none)[/]", default="").strip()
+    if extra:
+        argv += extra.split()
+    return argv + [t.replace("{}", val) for t in tgt["arg"]]
+
+
 def _tool_flow(dry: bool = False) -> None:
     if not dry:
         ok, why = tools.docker_available()
@@ -634,18 +735,21 @@ def _tool_flow(dry: bool = False) -> None:
     if not name:
         console.print("[dim]No tool selected — back to the menu.[/]")
         return
-    _describe_tool(name)
-    argstr = Prompt.ask(f"[{BLUE}]{name} args[/] [dim](copy an example above; blank to cancel)[/]",
-                        default="").strip()
-    if not argstr:
-        console.print("[dim]No args — back to the menu.[/]")
+    _describe_tool(name, brief=True)
+    console.print("[dim]Answer a few questions — temple-guard builds the command for you "
+                  "(or use [/]" + f"[{BLUE}]temple-guard tool {name} <flags>[/]" + "[dim] for raw flags).[/]")
+    argv = _guided_tool_args(name)
+    if not argv:
+        console.print("[dim]Cancelled — back to the menu.[/]")
         return
+    console.print(Text.assemble(("\nCommand  ", "dim"),
+                                (f"temple-guard tool {name} " + " ".join(argv), f"bold {BLUE}")))
     if dry:
-        _dry_cmd(f"{name} {argstr}", tools.raw_cmd(name, argstr.split()))
+        _dry_cmd(f"{name} {' '.join(argv)}", tools.raw_cmd(name, argv))
         return
     _authz_notice()
     with console.status(f"[{PURPLE}]running {name}…", spinner="dots"):
-        rc, out = tools.run_raw(name, argstr.split())
+        rc, out = tools.run_raw(name, argv)
     print(out or "(no output)")
 
 

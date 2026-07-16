@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.5.2] — 2026-07-16
+### Changed
+- **Guided "Run a tool" flow.** In the interactive menu, picking a tool now shows a brief
+  explainer (what it is + its risks) and then asks the common options as **questions**
+  (numbered choices / yes-no — aggression, ports, severity, timing…), assembling the command
+  for you and showing it before it runs — instead of asking you to type raw flags. The
+  `temple-guard tool <name>` CLI still prints the full flags reference for raw/scripted use.
+
 ## [0.5.1] — 2026-07-16
 ### Added
 - **Fuzzy, type-to-filter menu** (fzy / fzf-style) for the interactive session — start
