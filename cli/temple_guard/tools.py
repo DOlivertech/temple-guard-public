@@ -260,8 +260,14 @@ def _parse_whatweb(out: str, target: str) -> list[Finding]:
             if name not in plugins:
                 plugins[name] = detail or ""
     noise = {"IP", "Country", "Title", "HTML5", "Script", "UncommonHeaders", "Meta",
-             "Open", "RedirectLocation", "Strict", "Cookies", "HTTPOnly"}
-    tech = {k: v for k, v in plugins.items() if k not in noise}
+             "Open", "RedirectLocation", "Strict", "Cookies", "HTTPOnly", "RESERVED"}
+
+    def _keep(name: str, detail: str) -> bool:
+        # drop noise plugins, 1-char tokens, and bare country-code / RESERVED fragments (e.g. "ZZ")
+        return (name not in noise and len(name) >= 2
+                and not (re.fullmatch(r"[A-Z]{2,5}", name) and not detail))
+
+    tech = {k: v for k, v in plugins.items() if _keep(k, v)}
     findings = []
     if tech:
         summary = ", ".join(k + (f" {v}" if v else "") for k, v in list(tech.items())[:16])

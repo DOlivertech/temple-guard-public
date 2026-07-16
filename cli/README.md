@@ -7,6 +7,21 @@ of which exploit, flood, or brute-force. Optionally, with **Docker**, it also ru
 defensive tools (`testssl`, `nmap`, `nuclei`, `nikto`, `wafw00f`, `whatweb`) and merges
 their findings into the same report.
 
+## What it looks like
+
+A fuzzy, type-to-filter menu — start typing to narrow it down:
+
+![temple-guard interactive menu](docs/screenshots/cli-menu.svg)
+
+A scan of your app: findings ranked by severity, each with evidence + remediation.
+
+![temple-guard scan report](docs/screenshots/cli-scan.svg)
+
+`--deep` merges the Docker recon tools into the same report — here `nmap` catches a database
+exposed on the host, and `wafw00f` flags that nothing sits in front of the app:
+
+![temple-guard deep scan](docs/screenshots/cli-deep-scan.svg)
+
 ## Install
 
 `temple-guard` is a self-contained Python CLI (Python 3.9+). The cleanest install is
@@ -138,6 +153,10 @@ to use it, its risks, and the key flags). `localhost` / `127.0.0.1` / `host.dock
 is auto-remapped to the host's numeric IPv4 so the container reliably reaches your app. It
 prints the tool's raw output. (Also available as "Run a tool" in the interactive menu.)
 
+Every tool comes with an explainer — what it is, how to use it, its risks, and the key flags:
+
+![temple-guard tool explainer](docs/screenshots/cli-tool-explainer.svg)
+
 ## Dry run — preview any action
 
 **Every** action has a dry run: it prints exactly what *would* happen and runs nothing.
@@ -148,6 +167,8 @@ temple-guard tool nmap --dry-run <args>    # the docker command a tool run would
 temple-guard shell --dry-run               # the shell container command
 ```
 In the interactive menu, flip **Dry-run: ON** and every choice becomes preview-only.
+
+![temple-guard dry run](docs/screenshots/cli-dry-run.svg)
 
 ## Interactive Kali shell
 ```bash

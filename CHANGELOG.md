@@ -15,6 +15,12 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
   `temple-guard tool <name> --dry-run <args>` and `temple-guard shell --dry-run` print the
   exact `docker run …` command and run nothing; `scan --deep --dry-run` lists each tool's
   command as well. Previews spin up **zero** containers (host-IP resolution is skipped).
+### Fixed
+- whatweb tech-fingerprint parsing dropped bare country-code / `RESERVED` fragments (a lone
+  "ZZ") from the summary — minimal-tech apps now read "No tech stack fingerprinted" cleanly.
+### Docs
+- README now shows terminal screenshots (menu, scan, deep scan, tool explainer, dry-run),
+  captured from real runs against a local app.
 
 ## [0.5.0] — 2026-07-16
 ### Added
