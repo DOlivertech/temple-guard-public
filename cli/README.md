@@ -17,7 +17,7 @@ repo's **Releases**, then follow your platform:
 brew install pipx            # if you don't already have pipx
 pipx ensurepath              # once — then open a new terminal
 
-pipx install ./temple_guard-0.3.1-py3-none-any.whl
+pipx install ./temple_guard-0.3.2-py3-none-any.whl
 ```
 
 ### Windows (PowerShell)
@@ -25,20 +25,29 @@ pipx install ./temple_guard-0.3.1-py3-none-any.whl
 py -m pip install --user pipx    # if you don't already have pipx
 py -m pipx ensurepath            # once — then open a new terminal
 
-pipx install .\temple_guard-0.3.1-py3-none-any.whl
+pipx install .\temple_guard-0.3.2-py3-none-any.whl
 ```
 
 ### Linux / other
 ```bash
 python3 -m pip install --user pipx && python3 -m pipx ensurepath
-pipx install ./temple_guard-0.3.1-py3-none-any.whl
+pipx install ./temple_guard-0.3.2-py3-none-any.whl
 ```
 
 Once it's published to PyPI you'll be able to skip the wheel and just
 `pipx install temple-guard`. Prefer not to use pipx? `pip install
-./temple_guard-0.3.1-py3-none-any.whl` works too (ideally inside a virtualenv).
+./temple_guard-0.3.2-py3-none-any.whl` works too (ideally inside a virtualenv).
 
 **Manage it:** `pipx upgrade temple-guard` · `pipx uninstall temple-guard`.
+
+### `temple-guard: command not found`?
+pipx installs the command into a user bin directory that must be on your **PATH**:
+`~/.local/bin` (macOS / Linux) or `%USERPROFILE%\.local\bin` / the Python user `Scripts`
+dir (Windows). `pipx ensurepath` (above) adds it — but you must then **open a new
+terminal** (or `source ~/.zshrc` / `~/.bashrc`) for the change to take effect. Verify with
+`pipx list` and `temple-guard version`.
+> On zsh with `AUTO_CD` (e.g. oh-my-zsh), if PATH still isn't set, typing bare
+> `temple-guard` may just `cd` into a same-named folder — that's the PATH, not the tool.
 
 ## Usage
 

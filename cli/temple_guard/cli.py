@@ -37,16 +37,18 @@ EYE = "#6b5a2a"      # dark eye slits
 
 # each row is a list of (text, colour|None) segments — 11 cells wide, saber on col 5
 _EMBLEM = [
-    [("╭─────────╮", SHIELD)],
-    [("│", SHIELD), ("    ", None), ("╻", SABER), ("    ", None), ("│", SHIELD)],
-    [("│", SHIELD), ("  ", None), ("╭─", MASK), ("╨", HILT), ("─╮", MASK), ("  ", None), ("│", SHIELD)],
-    [("│", SHIELD), ("  ", None), ("┃", MASK), ("▚", EYE), (" ", None), ("▞", EYE), ("┃", MASK), ("  ", None), ("│", SHIELD)],
-    [("│", SHIELD), ("  ", None), ("╰─", MASK), ("╥", HILT), ("─╯", MASK), ("  ", None), ("│", SHIELD)],
-    [("╰╮", SHIELD), ("   ", None), ("┃", SABER), ("   ", None), ("╭╯", SHIELD)],
-    [(" ", None), ("╰╮", SHIELD), ("  ", None), ("┃", SABER), ("  ", None), ("╭╯", SHIELD), (" ", None)],
-    [("   ", None), ("╰─", SHIELD), ("┴", SABER), ("─╯", SHIELD), ("   ", None)],
+    [("  ╭───────────╮  ", SHIELD)],
+    [("  │     ", SHIELD), ("┃", SABER), ("     │  ", SHIELD)],
+    [("  │    ", SHIELD), ("▟", SABER), ("█", HILT), ("▙", SABER), ("    │  ", SHIELD)],
+    [("  │   ", SHIELD), ("▟", MASK), ("█", MASK), ("█", MASK), ("█", MASK), ("▙", MASK), ("   │  ", SHIELD)],
+    [("  │   ", SHIELD), ("█", MASK), ("▜", EYE), ("█", HILT), ("▛", EYE), ("█", MASK), ("   │  ", SHIELD)],
+    [("  │   ", SHIELD), ("▜", MASK), ("█", MASK), ("█", MASK), ("█", MASK), ("▛", MASK), ("   │  ", SHIELD)],
+    [("  │    ", SHIELD), ("▜", SABER), ("█", HILT), ("▛", SABER), ("    │  ", SHIELD)],
+    [("  ╰╮    ", SHIELD), ("┃", SABER), ("    ╭╯  ", SHIELD)],
+    [("   ╰╮   ", SHIELD), ("┃", SABER), ("   ╭╯   ", SHIELD)],
+    [("    ╰───", SHIELD), ("┸", SABER), ("───╯    ", SHIELD)],
 ]
-_EMBLEM_W = 11
+_EMBLEM_W = 17
 
 
 def _hex(c: str) -> tuple[int, int, int]:
@@ -198,44 +200,87 @@ def scan(
     raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
 
 
-@app.command()
-def interactive() -> None:
-    """Interactive, colourful session — choose a target and options, then scan."""
-    _banner(animate=True)
-    _authz_notice()
-    console.print()
+# menu shown by the interactive entry point: (key, label, description)
+_MENU = [
+    ("1", "Scan a target", "run the read-only checks and get a report"),
+    ("2", "Dry run", "list the checks — send nothing"),
+    ("3", "What it checks", "the checks temple-guard runs"),
+    ("4", "Help", "commands & flags"),
+    ("q", "Quit", ""),
+]
 
-    console.print(Text("What temple-guard checks (all bounded & read-only):", style=f"bold {PURPLE}"))
+_COMMANDS = [
+    ("temple-guard", "this interactive menu"),
+    ("temple-guard scan <url>", "scan a target and print a report"),
+    ("temple-guard scan <url> -v", "verbose — each check + finding, live"),
+    ("temple-guard scan <url> --dry-run", "list the checks, send nothing"),
+    ("temple-guard scan <url> -o report.html", "save a report (.html / .pdf / .md / .json)"),
+    ("temple-guard scan <url> --json", "machine-readable findings"),
+    ("temple-guard version", "print the version"),
+    ("temple-guard --help", "full command reference"),
+]
+
+
+def _print_checks() -> None:
+    console.print(Text("\nWhat temple-guard checks (all bounded & read-only):", style=f"bold {PURPLE}"))
     for cat, name, desc in CHECK_PLAN:
         console.print(Text.assemble(("  • ", f"{BLUE}"), (name, "bold white"), (f"   {desc}", "dim")))
-    console.print()
 
-    url = Prompt.ask(f"[{BLUE}]Target URL to scan[/] [dim](your own / authorized)[/]").strip()
+
+def _print_commands() -> None:
+    console.print(Text("\nCommands:", style=f"bold {PURPLE}"))
+    for cmd, desc in _COMMANDS:
+        console.print(Text.assemble(("  ", ""), (cmd.ljust(42), f"{BLUE}"), (desc, "dim")))
+
+
+def _scan_flow() -> None:
+    """Prompt for a target + options, run the scan, and offer to save a report."""
+    url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
     if not url:
-        console.print("[dim]No target given — exiting.[/]")
-        raise typer.Exit()
-
-    if Confirm.ask("[dim]Dry run first (list checks, send nothing)?[/]", default=False):
-        console.print()
-        _print_dry_run(url)
-        console.print()
-
-    if not Confirm.ask("[#fbbf24]I'm authorized to test this target. Run the live scan?[/]", default=True):
+        console.print("[dim]No target — back to the menu.[/]")
+        return
+    if not Confirm.ask("[#fbbf24]I'm authorized to test this target. Run the scan?[/]", default=True):
         console.print("[dim]Cancelled — nothing was sent.[/]")
-        raise typer.Exit()
-
-    verbose = Confirm.ask("Show verbose live progress?", default=True)
+        return
+    verbose = Confirm.ask("Verbose live output?", default=True)
     console.print()
     result = _run(url, verbose=verbose)
     render(result, console)
-
     fmt = Prompt.ask("Save a report?", choices=["no", "html", "markdown", "pdf", "json"], default="no")
     if fmt != "no":
         ext = {"html": "html", "markdown": "md", "pdf": "pdf", "json": "json"}[fmt]
         path = Path(Prompt.ask("File path", default=f"temple-guard-report.{ext}"))
         _write_report(result, path)
 
-    raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+
+@app.command()
+def interactive() -> None:
+    """Interactive, colourful menu — pick what to run."""
+    _banner(animate=True)
+    _authz_notice()
+
+    while True:
+        console.print(Text("\nWhat would you like to do?", style=f"bold {PURPLE}"))
+        for key, label, desc in _MENU:
+            console.print(Text.assemble((f"  {key}  ", f"bold {BLUE}"),
+                                        (label.ljust(16), "bold white"), (desc, "dim")))
+        choice = Prompt.ask(f"[{BLUE}]Choose[/]", choices=["1", "2", "3", "4", "q"], default="1")
+
+        if choice == "q":
+            console.print("[dim]Bye — stay safe out there.[/]")
+            raise typer.Exit()
+        if choice == "1":
+            console.print()
+            _scan_flow()
+        elif choice == "2":
+            url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
+            if url:
+                console.print()
+                _print_dry_run(url)
+        elif choice == "3":
+            _print_checks()
+        elif choice == "4":
+            _print_commands()
 
 
 @app.command()

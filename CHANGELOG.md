@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.3.2] — 2026-07-16
+### Added
+- **Menu entry point** — bare `temple-guard` (interactive) now opens a menu of actions
+  (Scan / Dry run / What it checks / Help) instead of jumping straight to a URL prompt.
+### Changed
+- **Redesigned the terminal banner emblem** to read more like the Temple Guard shield +
+  hooded-mask + saberstaff logo.
+- Install docs: added a per-OS **"command not found" / PATH** note (`pipx ensurepath` +
+  restart your shell).
+
 ## [0.3.1] — 2026-07-16
 ### Added
 - The **HTML report now embeds the Temple Guard shield logo** — in the nav bar and the banner.

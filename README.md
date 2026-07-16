@@ -188,7 +188,7 @@ brute-forces; a single `GET` per check (plus one `OPTIONS`).
 `temple-guard` installs with **pipx** (isolated + on your PATH). Grab the wheel from
 this repo's **Releases**, then:
 ```bash
-pipx install ./temple_guard-0.3.1-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
+pipx install ./temple_guard-0.3.2-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
 ```
 New to pipx, or on **macOS / Windows**? [`cli/README.md`](cli/README.md) has the
 per-platform setup (installing pipx, `ensurepath`).
