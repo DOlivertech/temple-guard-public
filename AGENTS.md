@@ -207,3 +207,22 @@ Smoke endpoints: `GET /api/health`, `/api/dashboard`, `/api/standards`,
   for heavy concurrent writes prefer Postgres (`TG_DATABASE_URL`).
 - **Deleting a target cascades** its own scans + findings (by `target_id`); suite scans
   that merely share the hostname are preserved.
+
+## Releasing (`temple-guard` CLI)
+
+Releases are tagged `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **Every release
+gets curated, human-readable notes — never auto-generated.** Steps:
+
+1. Bump the version in **`cli/pyproject.toml`** and **`cli/temple_guard/__init__.py`**.
+2. Add a dated section to **[CHANGELOG.md](CHANGELOG.md)** (Keep a Changelog format —
+   `Added` / `Changed` / `Fixed`). This section *is* the release notes.
+3. Build the artifacts: `cd cli && python -m build` → `dist/temple_guard-<v>-py3-none-any.whl`
+   + `.tar.gz`.
+4. Cut the release, using the CHANGELOG section as the notes (keep a short install + usage
+   snippet at the top):
+   ```bash
+   gh release create v<v> cli/dist/temple_guard-<v>-* \
+     --title "temple-guard v<v>" --notes-file <notes.md> --target main
+   ```
+5. `pipx install --force cli/dist/temple_guard-<v>-py3-none-any.whl` to update a local install,
+   and bump the wheel version referenced in `README.md` + `cli/README.md`.

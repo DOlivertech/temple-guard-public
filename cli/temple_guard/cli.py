@@ -22,7 +22,7 @@ except Exception:  # pragma: no cover
 
 from . import __version__
 from .checks import CHECK_PLAN, scan as run_scan
-from .report import BLUE, PURPLE, make_progress_reporter, render, to_markdown, to_pdf
+from .report import BLUE, PURPLE, make_progress_reporter, render, to_html, to_markdown, to_pdf
 
 app = typer.Typer(add_completion=False, no_args_is_help=False,
                   help="Scan a web app you own and get a remediation report.")
@@ -153,6 +153,9 @@ def _write_report(result, path: Path) -> None:
     if ext == ".pdf":
         to_pdf(result, str(path))
         kind = "PDF"
+    elif ext in (".html", ".htm"):
+        path.write_text(to_html(result))
+        kind = "HTML"
     elif ext == ".json":
         path.write_text(json.dumps(_result_dict(result), indent=2))
         kind = "JSON"
@@ -226,9 +229,9 @@ def interactive() -> None:
     result = _run(url, verbose=verbose)
     render(result, console)
 
-    fmt = Prompt.ask("Save a report?", choices=["no", "markdown", "pdf", "json"], default="no")
+    fmt = Prompt.ask("Save a report?", choices=["no", "html", "markdown", "pdf", "json"], default="no")
     if fmt != "no":
-        ext = {"markdown": "md", "pdf": "pdf", "json": "json"}[fmt]
+        ext = {"html": "html", "markdown": "md", "pdf": "pdf", "json": "json"}[fmt]
         path = Path(Prompt.ask("File path", default=f"temple-guard-report.{ext}"))
         _write_report(result, path)
 
