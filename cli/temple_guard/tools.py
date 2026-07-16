@@ -44,6 +44,7 @@ def _port(url: str) -> int:
 
 _LOCAL_RE = re.compile(r"\b(localhost|127\.0\.0\.1|host\.docker\.internal)\b")
 _HOST_IP_CACHE = None   # resolved once per process; "" = couldn't resolve → fall back to the hostname
+_RESOLVE = True         # set False during dry-run previews so a preview spins up NOTHING
 
 
 def _host_gateway_ip() -> str:
@@ -55,6 +56,8 @@ def _host_gateway_ip() -> str:
     a number has no AAAA record to prefer. Resolved once and cached; falls back to
     the hostname if resolution fails (e.g. plain Linux Docker, where it isn't needed)."""
     global _HOST_IP_CACHE
+    if not _RESOLVE:
+        return ""
     if _HOST_IP_CACHE is not None:
         return _HOST_IP_CACHE
     _HOST_IP_CACHE = ""
@@ -87,9 +90,17 @@ def _remap(s: str) -> str:
     return _LOCAL_RE.sub(_host_gateway_ip() or "host.docker.internal", s)
 
 
+def _docker_cmd(image: str, argv: list, extra: tuple = (), interactive: bool = False) -> list:
+    """Build the `docker run …` command (shared by real runs and dry-run previews)."""
+    base = ["docker", "run", "--rm"]
+    if interactive:
+        base.append("-it")
+    base += ["--add-host=host.docker.internal:host-gateway", *extra, image, *argv]
+    return base
+
+
 def _run(image: str, argv: list[str], timeout: int, extra: tuple = ()) -> tuple[int, str, str]:
-    cmd = ["docker", "run", "--rm", "--add-host=host.docker.internal:host-gateway",
-           *extra, image, *argv]
+    cmd = _docker_cmd(image, argv, extra)
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return p.returncode, p.stdout, p.stderr
@@ -382,6 +393,35 @@ def run_raw(name: str, args: list, timeout: Optional[int] = None) -> tuple[int, 
     remapped = [_remap(a) for a in args]
     rc, out, err = _run(tool.image, remapped, timeout or tool.default_timeout, tool.extra)
     return rc, (out if out.strip() else err)
+
+
+def raw_cmd(name: str, args: list) -> list:
+    """The exact `docker run …` a `tool <name> <args>` passthrough WOULD run (no side effects)."""
+    global _RESOLVE
+    tool = TOOLS[name]
+    _RESOLVE = False
+    try:
+        remapped = [_remap(a) for a in args]
+    finally:
+        _RESOLVE = True
+    return _docker_cmd(tool.image, remapped, tool.extra)
+
+
+def tool_cmd(name: str, url: str) -> list:
+    """The `docker run …` that `run_tool(name, url)` WOULD run (parsed / --deep path)."""
+    global _RESOLVE
+    tool = TOOLS[name]
+    _RESOLVE = False
+    try:
+        argv = tool.argv(_container_host(_host(url)), _port(url), url)
+    finally:
+        _RESOLVE = True
+    return _docker_cmd(tool.image, argv, tool.extra)
+
+
+def shell_cmd(image: Optional[str] = None) -> list:
+    """The `docker run …` that `kali_shell()` WOULD run."""
+    return _docker_cmd(image or KALI_SHELL_IMAGE, ["/bin/bash"], interactive=True)
 
 
 def kali_shell(image: Optional[str] = None) -> int:

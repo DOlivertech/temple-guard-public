@@ -127,6 +127,38 @@ def _authz_notice() -> None:
          "italic #fbbf24")))
 
 
+def _pick(message: str, items: list, default: str = None):
+    """Fuzzy, type-to-filter selector (fzy / fzf-style). `items` = [(value, label, desc)].
+    Returns the chosen value, or None if cancelled. Falls back to a numbered rich prompt
+    when a fuzzy TTY isn't available (or TG_NO_FUZZY is set)."""
+    if sys.stdin.isatty() and console.is_terminal and not os.environ.get("TG_NO_FUZZY"):
+        try:
+            from InquirerPy import inquirer
+            from InquirerPy.base.control import Choice
+            choices = [Choice(value=v, name=(f"{lbl}   ·   {d}" if d else lbl)) for v, lbl, d in items]
+            return inquirer.fuzzy(
+                message=message, choices=choices, border=True,
+                max_height="70%", cycle=True, pointer="❯", qmark="›", amark="›",
+                instruction="(type to filter · ↑↓ move · enter select · esc cancel)",
+            ).execute()
+        except KeyboardInterrupt:
+            return None
+        except Exception:  # any TTY / import issue → graceful fallback
+            pass
+    console.print(Text(f"\n{message}", style=f"bold {PURPLE}"))
+    for v, lbl, d in items:
+        console.print(Text.assemble((f"  {v}  ", f"bold {BLUE}"), (lbl.ljust(16), "bold white"), (d, "dim")))
+    keys = [v for v, _, _ in items]
+    return Prompt.ask(f"[{BLUE}]Choose[/]", choices=keys, default=default or keys[0])
+
+
+def _dry_cmd(label: str, cmd: list) -> None:
+    """Show the exact command an action WOULD run, and run nothing."""
+    console.print(Text.assemble((" DRY RUN ", "bold #fbbf24 reverse"), ("  ", ""), (label, "bold white")))
+    console.print(Text.assemble(("  $ ", f"bold {BLUE}"), (" ".join(cmd), "#e2e8f0")))
+    console.print(Text("  ↑ nothing was run — this is what would execute.", style="dim italic"))
+
+
 def _print_dry_run(url: str) -> None:
     console.print(Text("DRY RUN", style=f"bold {PURPLE} reverse"),
                   Text(f" — would run these read-only checks against {url}:", style="dim"))
@@ -262,9 +294,9 @@ def scan(
     if dry_run:
         _print_dry_run(url)
         if tool_names:
-            console.print(Text.assemble(("\nWould also run Docker tools: ", "dim"),
-                                        (", ".join(tool_names), f"bold {BLUE}"),
-                                        (" — no containers were started.", "dim")))
+            console.print(Text("\nWould also run these Docker tools (no containers started):", style="dim"))
+            for name in tool_names:
+                _dry_cmd(tools.TOOLS[name].name, tools.tool_cmd(name, url))
         raise typer.Exit()
 
     result = _run(url, verbose=verbose and not json_out)
@@ -284,8 +316,12 @@ def scan(
 
 
 @app.command()
-def shell(image: str = typer.Option(None, "--image", help="Container image (default: kalilinux/kali-rolling).")):
+def shell(image: str = typer.Option(None, "--image", help="Container image (default: kalilinux/kali-rolling)."),
+          dry_run: bool = typer.Option(False, "--dry-run", help="Show the container command that would run; start nothing.")):
     """Drop into an interactive Kali shell in a container (Docker required)."""
+    if dry_run:
+        _dry_cmd("Kali shell", tools.shell_cmd(image))
+        raise typer.Exit(0)
     ok, why = tools.docker_available()
     if not ok:
         console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
@@ -358,11 +394,18 @@ def tool(ctx: typer.Context,
         _print_tool_usage()
         raise typer.Exit(0 if name in (None, "-h", "--help") else 1)
     args = list(ctx.args)
+    dry = False
+    for flag in ("--dry-run", "--tg-dry-run"):
+        if flag in args:
+            dry, args = True, [a for a in args if a != flag]
     if not args:
         # a bare `tool <name>` is a request to learn about it — show the explainer
         _describe_tool(name)
         console.print(f"[dim]Add arguments to run it — copy one of the examples above "
                       f"(or `temple-guard tool {name} -h` for the tool's own help).[/]")
+        raise typer.Exit(0)
+    if dry:
+        _dry_cmd(f"{name} {' '.join(args)}", tools.raw_cmd(name, args))
         raise typer.Exit(0)
     ok, why = tools.docker_available()
     if not ok:
@@ -501,19 +544,6 @@ def update(
     raise typer.Exit(_do_update(check=check, repo=repo, ref=ref))
 
 
-# menu shown by the interactive entry point: (key, label, description)
-_MENU = [
-    ("1", "Scan a target", "the read-only native checks"),
-    ("2", "Deep scan", "native checks + Docker recon tools (whatweb, wafw00f, testssl, nmap, nuclei)"),
-    ("3", "Run a tool", "one Kali tool with your own arguments (with a full explainer)"),
-    ("4", "Kali shell", "interactive shell in a Kali container"),
-    ("5", "Dry run", "list the checks — send nothing"),
-    ("6", "What it checks", "the checks temple-guard runs"),
-    ("7", "Help", "commands & flags"),
-    ("8", "Update", "pull the newest temple-guard from its repo"),
-    ("q", "Quit", ""),
-]
-
 _COMMANDS = [
     ("temple-guard", "this interactive menu"),
     ("temple-guard scan <url>", "native read-only checks + report"),
@@ -525,8 +555,10 @@ _COMMANDS = [
     ("temple-guard tool", "list the Docker tools"),
     ("temple-guard tool <name>", "full explainer for a tool (what · how · risks · flags)"),
     ("temple-guard tool nmap <args>", "run a Kali tool with your own flags (full arg set)"),
+    ("temple-guard tool nmap --dry-run", "preview the docker command for a tool; run nothing"),
     ("temple-guard tool nmap -h", "the tool's own help / full options"),
     ("temple-guard shell", "interactive Kali shell in a container"),
+    ("temple-guard shell --dry-run", "preview the shell container command; start nothing"),
     ("temple-guard update", "update to the newest version from the repo"),
     ("temple-guard update --check", "check for a newer version, install nothing"),
     ("temple-guard version", "print the version"),
@@ -546,11 +578,20 @@ def _print_commands() -> None:
         console.print(Text.assemble(("  ", ""), (cmd.ljust(42), f"{BLUE}"), (desc, "dim")))
 
 
-def _scan_flow(deep: bool = False) -> None:
-    """Prompt for a target + options, run the scan (+ Docker tools if deep), offer to save."""
+def _scan_flow(deep: bool = False, dry: bool = False) -> None:
+    """Prompt for a target + options, run the scan (+ Docker tools if deep), offer to save.
+    In dry mode: print the checks + tool commands that would run, and run nothing."""
     url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
     if not url:
         console.print("[dim]No target — back to the menu.[/]")
+        return
+    if dry:
+        console.print()
+        _print_dry_run(url)
+        if deep:
+            console.print(Text("\nWould also run these Docker tools (no containers started):", style="dim"))
+            for name in tools.DEFENSIVE:
+                _dry_cmd(tools.TOOLS[name].name, tools.tool_cmd(name, url))
         return
     if not Confirm.ask("[#fbbf24]I'm authorized to test this target. Run the scan?[/]", default=True):
         console.print("[dim]Cancelled — nothing was sent.[/]")
@@ -569,7 +610,10 @@ def _scan_flow(deep: bool = False) -> None:
         _write_report(result, path)
 
 
-def _shell_flow() -> None:
+def _shell_flow(dry: bool = False) -> None:
+    if dry:
+        _dry_cmd("Kali shell", tools.shell_cmd())
+        return
     ok, why = tools.docker_available()
     if not ok:
         console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
@@ -580,18 +624,24 @@ def _shell_flow() -> None:
     tools.kali_shell()
 
 
-def _tool_flow() -> None:
-    ok, why = tools.docker_available()
-    if not ok:
-        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+def _tool_flow(dry: bool = False) -> None:
+    if not dry:
+        ok, why = tools.docker_available()
+        if not ok:
+            console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+            return
+    name = _pick("Which tool?", [(k, t.name, t.desc) for k, t in tools.TOOLS.items()], default="nmap")
+    if not name:
+        console.print("[dim]No tool selected — back to the menu.[/]")
         return
-    console.print("[dim]Tools:[/] " + ", ".join(f"[{BLUE}]{k}[/]" for k in tools.TOOLS))
-    name = Prompt.ask("Which tool", choices=list(tools.TOOLS), default="nmap")
     _describe_tool(name)
     argstr = Prompt.ask(f"[{BLUE}]{name} args[/] [dim](copy an example above; blank to cancel)[/]",
                         default="").strip()
     if not argstr:
         console.print("[dim]No args — back to the menu.[/]")
+        return
+    if dry:
+        _dry_cmd(f"{name} {argstr}", tools.raw_cmd(name, argstr.split()))
         return
     _authz_notice()
     with console.status(f"[{PURPLE}]running {name}…", spinner="dots"):
@@ -601,44 +651,50 @@ def _tool_flow() -> None:
 
 @app.command()
 def interactive() -> None:
-    """Interactive, colourful menu — pick what to run."""
+    """Interactive, colourful menu — fuzzy-pick what to run (type to filter)."""
     _banner(animate=True)
     _authz_notice()
+    dry = False
 
     while True:
-        console.print(Text("\nWhat would you like to do?", style=f"bold {PURPLE}"))
-        for key, label, desc in _MENU:
-            console.print(Text.assemble((f"  {key}  ", f"bold {BLUE}"),
-                                        (label.ljust(16), "bold white"), (desc, "dim")))
-        choice = Prompt.ask(f"[{BLUE}]Choose[/]",
-                            choices=["1", "2", "3", "4", "5", "6", "7", "8", "q"], default="1")
+        if dry:
+            console.print(Text.assemble(
+                ("\n ● DRY-RUN ", "bold #fbbf24 reverse"),
+                ("  every action is previewed — nothing is sent or run.", "italic #fbbf24")))
+        items = [
+            ("1", "Scan a target", "read-only native checks"),
+            ("2", "Deep scan", "native checks + Docker recon tools"),
+            ("3", "Run a tool", "one Kali tool with your own arguments"),
+            ("4", "Kali shell", "interactive shell in a Kali container"),
+            ("5", "What it checks", "list the checks temple-guard runs"),
+            ("6", "Help", "commands & flags"),
+            ("7", "Update", "pull the newest temple-guard from its repo"),
+            ("d", f"Dry-run: {'ON' if dry else 'OFF'}", "toggle preview-only mode for every action"),
+            ("q", "Quit", ""),
+        ]
+        choice = _pick("What would you like to do?", items, default="1")
 
-        if choice == "q":
+        if choice in (None, "q"):
             console.print("[dim]Bye — stay safe out there.[/]")
             raise typer.Exit()
+        if choice == "d":
+            dry = not dry
+            continue
+        console.print()
         if choice == "1":
-            console.print()
-            _scan_flow(deep=False)
+            _scan_flow(deep=False, dry=dry)
         elif choice == "2":
-            console.print()
-            _scan_flow(deep=True)
+            _scan_flow(deep=True, dry=dry)
         elif choice == "3":
-            console.print()
-            _tool_flow()
+            _tool_flow(dry=dry)
         elif choice == "4":
-            _shell_flow()
+            _shell_flow(dry=dry)
         elif choice == "5":
-            url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
-            if url:
-                console.print()
-                _print_dry_run(url)
-        elif choice == "6":
             _print_checks()
-        elif choice == "7":
+        elif choice == "6":
             _print_commands()
-        elif choice == "8":
-            console.print()
-            _do_update()
+        elif choice == "7":
+            _do_update(check=True) if dry else _do_update()
 
 
 @app.command()

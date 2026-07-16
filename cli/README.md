@@ -19,7 +19,7 @@ repo's **Releases**, then follow your platform:
 brew install pipx            # if you don't already have pipx
 pipx ensurepath              # once — then open a new terminal
 
-pipx install ./temple_guard-0.5.0-py3-none-any.whl
+pipx install ./temple_guard-0.5.1-py3-none-any.whl
 ```
 
 ### Windows (PowerShell)
@@ -27,18 +27,18 @@ pipx install ./temple_guard-0.5.0-py3-none-any.whl
 py -m pip install --user pipx    # if you don't already have pipx
 py -m pipx ensurepath            # once — then open a new terminal
 
-pipx install .\temple_guard-0.5.0-py3-none-any.whl
+pipx install .\temple_guard-0.5.1-py3-none-any.whl
 ```
 
 ### Linux / other
 ```bash
 python3 -m pip install --user pipx && python3 -m pipx ensurepath
-pipx install ./temple_guard-0.5.0-py3-none-any.whl
+pipx install ./temple_guard-0.5.1-py3-none-any.whl
 ```
 
 Once it's published to PyPI you'll be able to skip the wheel and just
 `pipx install temple-guard`. Prefer not to use pipx? `pip install
-./temple_guard-0.5.0-py3-none-any.whl` works too (ideally inside a virtualenv).
+./temple_guard-0.5.1-py3-none-any.whl` works too (ideally inside a virtualenv).
 
 **Manage it:** `pipx uninstall temple-guard` · to **update**, see below.
 
@@ -65,11 +65,14 @@ terminal** (or `source ~/.zshrc` / `~/.bashrc`) for the change to take effect. V
 
 ## Usage
 
-**Interactive** — a colourful session that lists every check, then walks you through
-the target and options (dry-run, verbose, save format):
+**Interactive** — a colourful session with a **fuzzy, type-to-filter menu** (fzy/fzf-style:
+start typing to narrow the options, ↑↓ to move, enter to pick). It walks you through the
+target and options (verbose, save format), and a **Dry-run toggle** makes *every* action
+preview-only:
 ```bash
 temple-guard                 # bare command launches it — or: temple-guard interactive
 ```
+> Prefer the classic numbered menu (no fuzzy)? Set `TG_NO_FUZZY=1`.
 
 **Direct** — scan straight away:
 ```bash
@@ -135,9 +138,21 @@ to use it, its risks, and the key flags). `localhost` / `127.0.0.1` / `host.dock
 is auto-remapped to the host's numeric IPv4 so the container reliably reaches your app. It
 prints the tool's raw output. (Also available as "Run a tool" in the interactive menu.)
 
+## Dry run — preview any action
+
+**Every** action has a dry run: it prints exactly what *would* happen and runs nothing.
+```bash
+temple-guard scan <url> --dry-run          # list the native checks (sends nothing)
+temple-guard scan <url> --deep --dry-run   # + the exact docker command for each tool
+temple-guard tool nmap --dry-run <args>    # the docker command a tool run would execute
+temple-guard shell --dry-run               # the shell container command
+```
+In the interactive menu, flip **Dry-run: ON** and every choice becomes preview-only.
+
 ## Interactive Kali shell
 ```bash
-temple-guard shell        # drop into a Kali container (first run pulls ~1 GB); 'exit' to leave
+temple-guard shell             # drop into a Kali container (first run pulls ~1 GB); 'exit' to leave
+temple-guard shell --dry-run   # just print the container command; start nothing
 ```
 
 > ⚠️ **Authorized use only** — run this against applications you own or have explicit

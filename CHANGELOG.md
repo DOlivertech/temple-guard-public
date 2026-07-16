@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.5.1] — 2026-07-16
+### Added
+- **Fuzzy, type-to-filter menu** (fzy / fzf-style) for the interactive session — start
+  typing to narrow the options, ↑↓ to move, enter to select (via InquirerPy). Falls back
+  to the classic numbered menu when there's no fuzzy-capable TTY, or with `TG_NO_FUZZY=1`.
+- **Dry-run for every action.** The interactive menu gained a **Dry-run toggle** that makes
+  *all* actions preview-only, and `--dry-run` now works on the Docker actions too:
+  `temple-guard tool <name> --dry-run <args>` and `temple-guard shell --dry-run` print the
+  exact `docker run …` command and run nothing; `scan --deep --dry-run` lists each tool's
+  command as well. Previews spin up **zero** containers (host-IP resolution is skipped).
+
 ## [0.5.0] — 2026-07-16
 ### Added
 - **Self-update** — `temple-guard update` pulls the newest source from the git repo and
