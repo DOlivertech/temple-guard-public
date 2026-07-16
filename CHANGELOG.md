@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.3.3] — 2026-07-16
+### Added
+- **Animated progress bar** while a scan runs — a live bar fills as the checks complete
+  (spinner · current check · count · elapsed time). With `-v`, each check and finding
+  streams above the bar as it's discovered.
+
 ## [0.3.2] — 2026-07-16
 ### Added
 - **Menu entry point** — bare `temple-guard` (interactive) now opens a menu of actions

@@ -140,14 +140,32 @@ def _result_dict(result) -> dict:
 
 
 def _run(url: str, verbose: bool):
-    """Run the scan — either verbose live progress, or a quiet spinner."""
-    if verbose:
-        console.print(Text.assemble(("▸ scanning ", f"bold {PURPLE}"), (url, f"bold {BLUE}")))
-        result = run_scan(url, on_event=make_progress_reporter(console))
-        console.print()
-        return result
-    with console.status(f"[{PURPLE}]scanning[/] {url} …", spinner="dots"):
-        return run_scan(url)
+    """Run the scan behind an animated progress bar. Verbose streams each check and
+    finding above the bar as it goes; either way the bar fills as checks complete."""
+    from rich.progress import (BarColumn, Progress, SpinnerColumn, TextColumn,
+                               TimeElapsedColumn)
+    total = len(CHECK_PLAN)
+    with Progress(
+        SpinnerColumn(style=PURPLE),
+        TextColumn("[bold white]{task.description}"),
+        BarColumn(bar_width=None, style="#334155", complete_style=BLUE, finished_style="#4ade80"),
+        TextColumn("[dim]{task.completed}/{task.total}[/]"),
+        TimeElapsedColumn(),
+        console=console, transient=True,
+    ) as progress:
+        task = progress.add_task(f"scanning {url}", total=total)
+        printer = make_progress_reporter(progress.console) if verbose else None
+
+        def on_event(kind: str, **k) -> None:
+            if kind == "step":
+                progress.update(task, description=k.get("name", "scanning…"))
+                progress.advance(task)
+            if printer is not None:
+                printer(kind, **k)
+
+        result = run_scan(url, on_event=on_event)
+        progress.update(task, completed=total, description="scan complete")
+    return result
 
 
 def _write_report(result, path: Path) -> None:
