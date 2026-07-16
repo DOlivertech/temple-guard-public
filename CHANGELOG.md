@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.4.1] — 2026-07-16
+### Added
+- **`temple-guard tool <name> [args…]`** — run a Docker tool with its **full argument set**,
+  e.g. `temple-guard tool nmap -sV -p 1-1000 host.docker.internal` (or `tool nmap -h` for the
+  tool's own help). `localhost` is auto-remapped to `host.docker.internal`. Added a
+  **"Run a tool"** entry to the interactive menu.
+### Fixed
+- Corrected swapped description/category fields in the tool registry.
+
 ## [0.4.0] — 2026-07-16
 ### Added
 - **Email-auth check (SPF / DMARC)** — a native DNS check (dnspython) for the target

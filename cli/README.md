@@ -18,7 +18,7 @@ repo's **Releases**, then follow your platform:
 brew install pipx            # if you don't already have pipx
 pipx ensurepath              # once — then open a new terminal
 
-pipx install ./temple_guard-0.4.0-py3-none-any.whl
+pipx install ./temple_guard-0.4.1-py3-none-any.whl
 ```
 
 ### Windows (PowerShell)
@@ -26,18 +26,18 @@ pipx install ./temple_guard-0.4.0-py3-none-any.whl
 py -m pip install --user pipx    # if you don't already have pipx
 py -m pipx ensurepath            # once — then open a new terminal
 
-pipx install .\temple_guard-0.4.0-py3-none-any.whl
+pipx install .\temple_guard-0.4.1-py3-none-any.whl
 ```
 
 ### Linux / other
 ```bash
 python3 -m pip install --user pipx && python3 -m pipx ensurepath
-pipx install ./temple_guard-0.4.0-py3-none-any.whl
+pipx install ./temple_guard-0.4.1-py3-none-any.whl
 ```
 
 Once it's published to PyPI you'll be able to skip the wheel and just
 `pipx install temple-guard`. Prefer not to use pipx? `pip install
-./temple_guard-0.4.0-py3-none-any.whl` works too (ideally inside a virtualenv).
+./temple_guard-0.4.1-py3-none-any.whl` works too (ideally inside a virtualenv).
 
 **Manage it:** `pipx upgrade temple-guard` · `pipx uninstall temple-guard`.
 
@@ -99,6 +99,18 @@ A `localhost` target is reached from the container via `host.docker.internal`. H
 **`nmap` scans the host's ports** (not just the one app), so it surfaces things like an
 exposed database. If Docker isn't available the tools are skipped and the native checks
 still run.
+
+### Run a tool with your own flags
+`--deep` uses each tool's default command. To drive a tool with **its full argument set**,
+use `temple-guard tool` — everything after the tool name is passed straight through:
+```bash
+temple-guard tool nmap -sV -p 1-1000 host.docker.internal
+temple-guard tool nmap -h                       # nmap's own help / all options
+temple-guard tool testssl --severity LOW example.com
+temple-guard tool nuclei -u https://example.com -tags cve,exposure
+```
+`localhost` / `127.0.0.1` is auto-remapped to `host.docker.internal`. It prints the tool's
+raw output. (Also available as "Run a tool" in the interactive menu.)
 
 ## Interactive Kali shell
 ```bash

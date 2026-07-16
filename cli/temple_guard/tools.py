@@ -143,18 +143,18 @@ def _parse_nuclei(out: str, target: str) -> list[Finding]:
 
 TOOLS: dict[str, Tool] = {
     "testssl": Tool(
-        "testssl", "TLS posture (testssl)", "drwetter/testssl.sh:3.2", "tls",
-        "deep TLS/crypto analysis — protocols, ciphers, certificate",
+        "testssl", "TLS posture (testssl)", "drwetter/testssl.sh:3.2",
+        "deep TLS/crypto analysis — protocols, ciphers, certificate", "tls",
         lambda h, p, u: ["--quiet", "--color", "0", "--protocols", f"{h}:{p if p != 80 else 443}"],
         parse=_parse_testssl, default_timeout=420),
     "nmap": Tool(
-        "nmap", "Service / port scan (nmap)", "instrumentisto/nmap:latest", "ports",
-        "service + version detection on the common ports",
+        "nmap", "Service / port scan (nmap)", "instrumentisto/nmap:latest",
+        "service + version detection on the common ports", "ports",
         lambda h, p, u: ["-sV", "-Pn", "--top-ports", "200", h],
         parse=_parse_nmap, default_timeout=300),
     "nuclei": Tool(
-        "nuclei", "Templated checks (nuclei)", "projectdiscovery/nuclei:latest", "templates",
-        "misconfiguration + exposure templates (first run downloads templates)",
+        "nuclei", "Templated checks (nuclei)", "projectdiscovery/nuclei:latest",
+        "misconfiguration + exposure templates (first run downloads templates)", "templates",
         lambda h, p, u: ["-u", u, "-silent", "-severity", "low,medium,high,critical",
                          "-tags", "misconfig,exposure,tech"],
         parse=_parse_nuclei,
@@ -174,6 +174,16 @@ def run_tool(key: str, url: str, timeout: Optional[int] = None) -> tuple[list[Fi
                          (err or f"exit {rc}")[:200],
                          "Check Docker is running and the image pulled, then retry.")], raw, False)
     return tool.parse(out, url), raw, True
+
+
+def run_raw(name: str, args: list, timeout: Optional[int] = None) -> tuple[int, str]:
+    """Run a tool in its container with the user's OWN arguments (full tool flags).
+    Returns (exit_code, combined_output). `localhost` / `127.0.0.1` in any argument is
+    auto-remapped to `host.docker.internal` so an app on your machine is reachable."""
+    tool = TOOLS[name]
+    remapped = [re.sub(r"\b(localhost|127\.0\.0\.1)\b", "host.docker.internal", a) for a in args]
+    rc, out, err = _run(tool.image, remapped, timeout or tool.default_timeout, tool.extra)
+    return rc, (out if out.strip() else err)
 
 
 def kali_shell(image: Optional[str] = None) -> int:

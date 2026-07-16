@@ -292,14 +292,63 @@ def shell(image: str = typer.Option(None, "--image", help="Container image (defa
     raise typer.Exit(code=tools.kali_shell(image))
 
 
+def _print_tool_usage() -> None:
+    console.print(Text("\nRun a Kali tool in its own container with YOUR arguments:",
+                       style=f"bold {PURPLE}"))
+    console.print(Text.assemble(("  temple-guard tool ", f"bold {BLUE}"), ("<tool> [args…]", "dim")))
+    console.print(Text("\nTools (each pulls + runs its own image):", style="dim"))
+    for key, t in tools.TOOLS.items():
+        console.print(Text.assemble((f"  {key.ljust(9)}", f"bold {BLUE}"), (t.desc, "dim")))
+    console.print(Text("\nExamples (full tool flags are passed straight through):", style="dim"))
+    for ex in ("temple-guard tool nmap -h                                  # nmap's own full help",
+               "temple-guard tool nmap -sV -p 1-1000 host.docker.internal",
+               "temple-guard tool nmap -A -T4 -Pn scanme.nmap.org",
+               "temple-guard tool testssl --severity LOW example.com",
+               "temple-guard tool nuclei -u https://example.com -tags cve,exposure"):
+        console.print(Text.assemble(("  ", ""), (ex, "white")))
+    console.print(Text("\nUse host.docker.internal for an app on your own machine "
+                       "(localhost is auto-remapped). Authorized targets only.", style="dim"))
+
+
+@app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+             add_help_option=False)
+def tool(ctx: typer.Context, name: str = typer.Argument(None, help="testssl | nmap | nuclei")):
+    """Run a Kali tool in its container with YOUR arguments — the tool's full flag set.
+
+    Examples:
+      temple-guard tool nmap -sV -p 1-1000 host.docker.internal
+      temple-guard tool nmap -h                 (nmap's own help)
+      temple-guard tool nuclei -u https://example.com -tags cve
+    """
+    if not name or name in ("-h", "--help") or name not in tools.TOOLS:
+        _print_tool_usage()
+        raise typer.Exit(0 if name in (None, "-h", "--help") else 1)
+    ok, why = tools.docker_available()
+    if not ok:
+        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        raise typer.Exit(1)
+    args = list(ctx.args)
+    if not args:
+        console.print(f"[dim]Provide arguments for {name} (or `temple-guard tool {name} -h` for its help).[/]")
+        raise typer.Exit(0)
+    _authz_notice()
+    console.print(Text.assemble((f"⚙ {name} ", f"bold {PURPLE}"), (" ".join(args), "dim"),
+                                (f"   [{tools.TOOLS[name].image}]", "dim")))
+    with console.status(f"[{PURPLE}]running {name}…", spinner="dots"):
+        rc, out = tools.run_raw(name, args)
+    print(out or "(no output)")
+    raise typer.Exit(rc)
+
+
 # menu shown by the interactive entry point: (key, label, description)
 _MENU = [
     ("1", "Scan a target", "the read-only native checks"),
     ("2", "Deep scan", "native checks + Docker tools (testssl, nmap, nuclei)"),
-    ("3", "Kali shell", "interactive shell in a Kali container"),
-    ("4", "Dry run", "list the checks — send nothing"),
-    ("5", "What it checks", "the checks temple-guard runs"),
-    ("6", "Help", "commands & flags"),
+    ("3", "Run a tool", "one Kali tool with your own arguments"),
+    ("4", "Kali shell", "interactive shell in a Kali container"),
+    ("5", "Dry run", "list the checks — send nothing"),
+    ("6", "What it checks", "the checks temple-guard runs"),
+    ("7", "Help", "commands & flags"),
     ("q", "Quit", ""),
 ]
 
@@ -311,6 +360,8 @@ _COMMANDS = [
     ("temple-guard scan <url> --tools nmap", "run specific Docker tools"),
     ("temple-guard scan <url> --dry-run", "list the checks, send nothing"),
     ("temple-guard scan <url> -o report.html", "save a report (.html / .pdf / .md / .json)"),
+    ("temple-guard tool nmap <args>", "run a Kali tool with your own flags (full arg set)"),
+    ("temple-guard tool nmap -h", "the tool's own help / full options"),
     ("temple-guard shell", "interactive Kali shell in a container"),
     ("temple-guard version", "print the version"),
     ("temple-guard --help", "full command reference"),
@@ -363,6 +414,21 @@ def _shell_flow() -> None:
     tools.kali_shell()
 
 
+def _tool_flow() -> None:
+    ok, why = tools.docker_available()
+    if not ok:
+        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        return
+    console.print("[dim]Tools:[/] " + ", ".join(f"[{BLUE}]{k}[/]" for k in tools.TOOLS))
+    name = Prompt.ask("Which tool", choices=list(tools.TOOLS), default="nmap")
+    console.print(f"[dim]Enter {name} args (e.g. [/][{BLUE}]-sV -p 1-1000 host.docker.internal[/][dim]); blank = its help.[/]")
+    argstr = Prompt.ask(f"{name} args", default="-h")
+    _authz_notice()
+    with console.status(f"[{PURPLE}]running {name}…", spinner="dots"):
+        rc, out = tools.run_raw(name, argstr.split())
+    print(out or "(no output)")
+
+
 @app.command()
 def interactive() -> None:
     """Interactive, colourful menu — pick what to run."""
@@ -374,7 +440,7 @@ def interactive() -> None:
         for key, label, desc in _MENU:
             console.print(Text.assemble((f"  {key}  ", f"bold {BLUE}"),
                                         (label.ljust(16), "bold white"), (desc, "dim")))
-        choice = Prompt.ask(f"[{BLUE}]Choose[/]", choices=["1", "2", "3", "4", "5", "6", "q"], default="1")
+        choice = Prompt.ask(f"[{BLUE}]Choose[/]", choices=["1", "2", "3", "4", "5", "6", "7", "q"], default="1")
 
         if choice == "q":
             console.print("[dim]Bye — stay safe out there.[/]")
@@ -386,15 +452,18 @@ def interactive() -> None:
             console.print()
             _scan_flow(deep=True)
         elif choice == "3":
-            _shell_flow()
+            console.print()
+            _tool_flow()
         elif choice == "4":
+            _shell_flow()
+        elif choice == "5":
             url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
             if url:
                 console.print()
                 _print_dry_run(url)
-        elif choice == "5":
-            _print_checks()
         elif choice == "6":
+            _print_checks()
+        elif choice == "7":
             _print_commands()
 
 
