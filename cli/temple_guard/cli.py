@@ -583,10 +583,15 @@ def _print_commands() -> None:
 def _scan_flow(deep: bool = False, dry: bool = False) -> None:
     """Prompt for a target + options, run the scan (+ Docker tools if deep), offer to save.
     In dry mode: print the checks + tool commands that would run, and run nothing."""
-    url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
+    url = Prompt.ask(f"[{BLUE}]Target URL[/] "
+                     f"[dim](e.g. https://beta.example.com — blank to cancel)[/]").strip()
     if not url:
         console.print("[dim]No target — back to the menu.[/]")
         return
+    if " " in url:
+        console.print("[#f87171]A target is a single URL — no spaces.[/]")
+        return
+    url = _norm_target(url, "url")
     if dry:
         console.print()
         _print_dry_run(url)
@@ -632,7 +637,7 @@ def _shell_flow(dry: bool = False) -> None:
 TOOL_GUIDE = {
     "whatweb": {
         "base": ["--color=never"],
-        "target": {"prompt": "Target URL", "arg": ["{}"]},
+        "target": {"prompt": "Target URL", "eg": "https://beta.example.com", "kind": "url", "arg": ["{}"]},
         "steps": [
             {"ask": "Aggression", "choices": [
                 ("passive — default", []), ("more requests (-a 3)", ["-a", "3"]), ("heavy (-a 4)", ["-a", "4"])]},
@@ -641,7 +646,7 @@ TOOL_GUIDE = {
     },
     "wafw00f": {
         "base": [],
-        "target": {"prompt": "Target URL", "arg": ["{}"]},
+        "target": {"prompt": "Target URL", "eg": "https://beta.example.com", "kind": "url", "arg": ["{}"]},
         "steps": [
             {"ask": "Test every WAF signature (slower, thorough)?", "flag": ["-a"], "default": False},
             {"ask": "Verbose output?", "flag": ["-v"], "default": False},
@@ -649,7 +654,7 @@ TOOL_GUIDE = {
     },
     "nmap": {
         "base": ["-Pn"],
-        "target": {"prompt": "Target host", "arg": ["{}"]},
+        "target": {"prompt": "Target host", "eg": "beta.example.com or localhost", "kind": "host", "arg": ["{}"]},
         "steps": [
             {"ask": "Detection", "choices": [
                 ("service + version (-sV)", ["-sV"]), ("aggressive: OS + default scripts (-A)", ["-A"])]},
@@ -661,7 +666,8 @@ TOOL_GUIDE = {
     },
     "testssl": {
         "base": ["--quiet", "--color", "0"],
-        "target": {"prompt": "Target host[:port]", "arg": ["{}"]},
+        "target": {"prompt": "Target host[:port]", "eg": "beta.example.com or beta.example.com:443",
+                   "kind": "hostport", "arg": ["{}"]},
         "steps": [
             {"ask": "Scope", "choices": [
                 ("full posture — default", []), ("protocols only (-p)", ["-p"]), ("vulnerabilities only (-U)", ["-U"])]},
@@ -672,7 +678,7 @@ TOOL_GUIDE = {
     },
     "nuclei": {
         "base": ["-silent"],
-        "target": {"prompt": "Target URL", "arg": ["-u", "{}"]},
+        "target": {"prompt": "Target URL", "eg": "https://beta.example.com", "kind": "url", "arg": ["-u", "{}"]},
         "steps": [
             {"ask": "Severity", "choices": [
                 ("low → critical — default", ["-severity", "low,medium,high,critical"]),
@@ -684,7 +690,8 @@ TOOL_GUIDE = {
     },
     "nikto": {
         "base": ["-ask", "no"],
-        "target": {"prompt": "Target URL", "arg": ["-h", "{}"]},
+        "target": {"prompt": "Target URL", "eg": "https://beta.example.com or http://localhost:8081",
+                   "kind": "url", "arg": ["-h", "{}"]},
         "steps": [
             {"ask": "Max scan time", "choices": [
                 ("3 min — default", ["-maxtime", "180"]), ("1 min (quick)", ["-maxtime", "60"]), ("no limit", [])]},
@@ -703,6 +710,41 @@ def _ask_choice(prompt: str, choices: list):
     return choices[int(idx) - 1][1]
 
 
+def _norm_target(val: str, kind: str) -> str:
+    """Tidy a typed target: add a scheme for URL tools; strip scheme/path (and port) for host tools."""
+    val = val.strip().rstrip("/")
+    if kind == "url":
+        if "://" in val:
+            return val
+        host = val.split("/", 1)[0]
+        # bare domain → https; localhost or a host:port → http (don't mangle local dev apps)
+        local = host.split(":", 1)[0] in ("localhost", "127.0.0.1", "0.0.0.0") or ":" in host
+        return ("http://" if local else "https://") + val
+    if "://" in val:
+        val = val.split("://", 1)[1]
+    val = val.split("/", 1)[0]              # drop any path
+    if kind == "host":
+        val = val.split(":", 1)[0]          # nmap wants a bare host (ports go via -p)
+    return val
+
+
+def _ask_target(tgt: dict):
+    """Prompt for a target with a format example + light validation. Returns the tidied
+    value, or None to cancel. Rejects empty / multi-token input (the classic 'your own' trap)."""
+    kind = tgt.get("kind", "url")
+    for _ in range(3):
+        raw = Prompt.ask(f"[{BLUE}]{tgt['prompt']}[/] "
+                         f"[dim](e.g. {tgt.get('eg', 'example.com')} — blank to cancel)[/]").strip()
+        if not raw:
+            return None
+        if " " in raw or "," in raw:
+            console.print("[#f87171]  A target is a single host / URL — no spaces or commas. "
+                          "Try again.[/]")
+            continue
+        return _norm_target(raw, kind)
+    return None
+
+
 def _guided_tool_args(name: str):
     """Ask the tool's guided questions and assemble its argv. Returns the list, or None if cancelled."""
     guide = TOOL_GUIDE.get(name)
@@ -710,7 +752,7 @@ def _guided_tool_args(name: str):
         s = Prompt.ask(f"[{BLUE}]{name} args[/] [dim](blank to cancel)[/]", default="").strip()
         return s.split() if s else None
     tgt = guide["target"]
-    val = Prompt.ask(f"[{BLUE}]{tgt['prompt']}[/] [dim](your own / authorized)[/]").strip()
+    val = _ask_target(tgt)
     if not val:
         return None
     argv = list(guide.get("base", []))
@@ -748,6 +790,9 @@ def _tool_flow(dry: bool = False) -> None:
         _dry_cmd(f"{name} {' '.join(argv)}", tools.raw_cmd(name, argv))
         return
     _authz_notice()
+    if not Confirm.ask("[#fbbf24]Run this?[/]", default=True):
+        console.print("[dim]Cancelled — back to the menu.[/]")
+        return
     with console.status(f"[{PURPLE}]running {name}…", spinner="dots"):
         rc, out = tools.run_raw(name, argv)
     print(out or "(no output)")

@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.5.3] — 2026-07-16
+### Fixed
+- **Guided-tool target: validation + a clearer prompt.** The target prompt showed a dim
+  "(your own / authorized)" reminder that read like a placeholder — so a stray "your own"
+  could be entered and silently scanned as two bogus hosts. It's now a **format example**
+  ("e.g. https://beta.example.com"), input is **validated** (empty / multi-token targets are
+  rejected and re-asked) and **normalized** (a URL pasted into a host prompt reduces to the
+  host; a bare domain gets `https://`, while `localhost` / `host:port` gets `http://`), and a
+  **"Run this?"** confirmation now precedes execution. Same clearer prompt in the scan flow.
+
 ## [0.5.2] — 2026-07-16
 ### Changed
 - **Guided "Run a tool" flow.** In the interactive menu, picking a tool now shows a brief
