@@ -1,6 +1,7 @@
 """Rendering — a colourful terminal report, live progress, markdown / HTML / PDF export."""
 from __future__ import annotations
 
+import base64
 import html as _html
 from datetime import datetime, timezone
 
@@ -244,6 +245,9 @@ _HTML_CSS = r"""
   .rnav button:hover{border-color:#38bdf8;color:#fff}
   .rnav .pdf{background:#38bdf8;color:#0b1120;border-color:#38bdf8;font-weight:600}
   .rnav .spacer{flex:1}
+  .rnav .logo{height:20px;width:20px;vertical-align:middle}
+  .banner .bhead{display:flex;align-items:center;gap:16px}
+  .banner .blogo{height:54px;width:54px;flex:0 0 auto}
   .banner{background:#0f172a;color:#fff;padding:26px 48px}
   .banner .brand{letter-spacing:2px;font-size:12px;color:#93c5fd;text-transform:uppercase}
   .banner h1{font-size:23px;margin:6px 0 4px;color:#fff;word-break:break-all}
@@ -271,7 +275,36 @@ _HTML_CSS = r"""
   @media print{body{background:#fff}.page{padding:0}.rnav{display:none}}
 """
 
-_HTML_NAV = ('<div class="rnav"><span class="bmini">&#9096; temple-guard</span>'
+_LOGO_SVG = r'''<svg width="240" height="240" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Temple Guard">
+  <defs>
+    <linearGradient id="tgShield" x1="0" y1="0" x2="0" y2="240" gradientUnits="userSpaceOnUse"><stop stop-color="#16233f"/><stop offset="1" stop-color="#0a1120"/></linearGradient>
+    <linearGradient id="tgMask" x1="0" y1="40" x2="0" y2="210" gradientUnits="userSpaceOnUse"><stop stop-color="#f6e7c1"/><stop offset="0.55" stop-color="#d9c290"/><stop offset="1" stop-color="#a3884f"/></linearGradient>
+    <linearGradient id="tgBlade" x1="0" y1="0" x2="0" y2="240" gradientUnits="userSpaceOnUse"><stop stop-color="#fff7cc"/><stop offset="0.5" stop-color="#ffd60a"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+    <radialGradient id="tgCore" cx="0.5" cy="0.5" r="0.5"><stop stop-color="#fffbe6"/><stop offset="1" stop-color="#ffd60a"/></radialGradient>
+    <filter id="tgGlow" x="-60%" y="-30%" width="220%" height="160%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <path d="M120 8 L210 40 V120 C210 178 172 214 120 232 C68 214 30 178 30 120 V40 Z" fill="url(#tgShield)" stroke="#38bdf8" stroke-opacity="0.55" stroke-width="3"/>
+  <path d="M120 8 L210 40 V120 C210 178 172 214 120 232 C68 214 30 178 30 120 V40 Z" fill="none" stroke="#0ea5e9" stroke-opacity="0.12" stroke-width="9"/>
+  <g filter="url(#tgGlow)"><rect x="116" y="22" width="8" height="64" rx="4" fill="url(#tgBlade)"/><rect x="116" y="170" width="8" height="48" rx="4" fill="url(#tgBlade)"/></g>
+  <rect x="113" y="92" width="14" height="58" rx="3" fill="#1f2937" stroke="#475569" stroke-width="1.5"/>
+  <rect x="111" y="100" width="18" height="5" rx="2" fill="#64748b"/><rect x="111" y="138" width="18" height="5" rx="2" fill="#64748b"/>
+  <g>
+    <path d="M120 44 C150 44 166 66 166 104 C166 150 146 184 120 198 C94 184 74 150 74 104 C74 66 90 44 120 44 Z" fill="url(#tgMask)" stroke="#7a652f" stroke-width="2"/>
+    <path d="M120 48 L120 150" stroke="#8a7338" stroke-width="2.5" stroke-opacity="0.6"/>
+    <path d="M92 96 C104 88 116 88 120 94 C124 88 136 88 148 96" fill="none" stroke="#7a652f" stroke-width="3" stroke-linecap="round"/>
+    <path d="M96 104 L114 110 L114 116 L96 110 Z" fill="#1a1205"/><path d="M144 104 L126 110 L126 116 L144 110 Z" fill="#1a1205"/>
+    <path d="M120 120 L131 156 C131 170 109 170 109 156 Z" fill="#caa75f" stroke="#7a652f" stroke-width="1.5"/>
+  </g>
+  <circle cx="120" cy="186" r="5" fill="url(#tgCore)" filter="url(#tgGlow)"/>
+</svg>'''
+
+
+def _logo_uri() -> str:
+    return "data:image/svg+xml;base64," + base64.b64encode(_LOGO_SVG.strip().encode("utf-8")).decode("ascii")
+
+
+_HTML_NAV = ('<div class="rnav"><img class="logo" src="__LOGO__" alt="Temple Guard">'
+             '<span class="bmini">temple-guard</span>'
              '<span class="spacer"></span>'
              "<button onclick=\"document.querySelectorAll('details.finding').forEach(function(d){d.open=true})\">Expand all</button>"
              "<button onclick=\"document.querySelectorAll('details.finding').forEach(function(d){d.open=false})\">Collapse all</button>"
@@ -285,18 +318,22 @@ def to_html(result: ScanResult) -> str:
     esc = _html.escape
     c = result.by_severity
     gen = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    logo = _logo_uri()
+    nav = _HTML_NAV.replace("__LOGO__", logo)
 
-    banner = (f'<div class="banner"><div class="brand">Temple Guard &middot; Self-Scan Report</div>'
+    banner = (f'<div class="banner"><div class="bhead">'
+              f'<img class="blogo" src="{logo}" alt="Temple Guard">'
+              f'<div><div class="brand">Temple Guard &middot; Self-Scan Report</div>'
               f'<h1>{esc(result.url)}</h1>'
               f'<div class="bmeta">Status {esc(str(result.status))} &middot; '
-              f'Server {esc(result.server or "-")} &middot; {gen}</div></div>')
+              f'Server {esc(result.server or "-")} &middot; {gen}</div></div></div></div>')
 
     head = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>temple-guard - self-scan report</title><style>' + _HTML_CSS + '</style></head><body>')
 
     if not result.reachable:
-        return (head + _HTML_NAV + banner +
+        return (head + nav + banner +
                 f'<div class="page"><p class="muted">Could not reach the target.</p>'
                 f'<pre>{esc(result.error)}</pre></div></body></html>')
 
@@ -320,7 +357,7 @@ def to_html(result: ScanResult) -> str:
     summary_line = (f'{len(result.findings)} finding(s) from bounded, read-only checks '
                     '(security headers, TLS, cookies, information disclosure, sensitive paths, HTTP methods).')
 
-    return (head + _HTML_NAV + banner +
+    return (head + nav + banner +
             '<div class="page"><h2>Summary</h2>'
             f'<p class="muted">{summary_line}</p><div class="summary">{risk}</div>'
             '<h2>Findings &amp; Remediation</h2>' + cards +

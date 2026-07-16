@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.3.1] — 2026-07-16
+### Added
+- The **HTML report now embeds the Temple Guard shield logo** — in the nav bar and the banner.
+### Fixed
+- **Sensitive-path false positives on catch-all / SPA servers**: temple-guard probes a bogus
+  path first and suppresses `/.git/config`, `/.env`, etc. findings when the server 200s
+  everything (or serves an HTML page in place of the config file).
+
 ## [0.3.0] — 2026-07-16
 ### Added
 - **CLI HTML report** (`temple-guard scan <url> -o report.html`) — a self-contained,

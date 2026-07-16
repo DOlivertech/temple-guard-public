@@ -189,19 +189,36 @@ def scan(url: str, timeout: float = 10.0, on_event: EventFn = None) -> ScanResul
             "Remove the X-Powered-By header."))
     done("disclosure", n0)
 
-    # sensitive path exposure
+    # sensitive path exposure — guarded against catch-all / SPA servers that 200 everything
     n0 = step("exposure")
     base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
     try:
         with httpx.Client(timeout=timeout, verify=False, follow_redirects=False) as c:
+            # probe a path that should NOT exist; if the server 200s it, it's a catch-all
+            # (SPA / framework fallback) and a 200 on a sensitive path proves nothing.
+            catch_all_len = None
+            try:
+                probe = c.get(base + "/__temple_guard_probe_404__")
+                if probe.status_code == 200:
+                    catch_all_len = len(probe.content)
+            except httpx.HTTPError:
+                pass
             for p in SENSITIVE_PATHS:
                 try:
                     pr = c.get(base + p)
-                    if pr.status_code == 200 and pr.content:
-                        add(Finding(
-                            f"Sensitive file exposed: {p}", "high", "exposure",
-                            f"GET {base}{p} → 200 ({len(pr.content)} bytes)",
-                            "Remove the file from the web root or block it at the edge."))
+                    if pr.status_code != 200 or not pr.content:
+                        continue
+                    ctype = pr.headers.get("content-type", "").lower()
+                    # skip if it looks like the catch-all page (≈ same size) or a generic
+                    # HTML page — a real .env / .git/config / creds file isn't text/html.
+                    if catch_all_len is not None and abs(len(pr.content) - catch_all_len) <= 24:
+                        continue
+                    if "html" in ctype:
+                        continue
+                    add(Finding(
+                        f"Sensitive file exposed: {p}", "high", "exposure",
+                        f"GET {base}{p} → 200 ({len(pr.content)} bytes, {ctype or 'unknown type'})",
+                        "Remove the file from the web root or block it at the edge."))
                 except httpx.HTTPError:
                     pass
     except Exception:  # noqa: BLE001
