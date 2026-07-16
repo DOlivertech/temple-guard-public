@@ -188,7 +188,7 @@ brute-forces; a single `GET` per check (plus one `OPTIONS`).
 `temple-guard` installs with **pipx** (isolated + on your PATH). Grab the wheel from
 this repo's **Releases**, then:
 ```bash
-pipx install ./temple_guard-0.3.3-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
+pipx install ./temple_guard-0.4.0-py3-none-any.whl   # or, once on PyPI: pipx install temple-guard
 ```
 New to pipx, or on **macOS / Windows**? [`cli/README.md`](cli/README.md) has the
 per-platform setup (installing pipx, `ensurepath`).
@@ -198,6 +198,7 @@ per-platform setup (installing pipx, `ensurepath`).
 temple-guard                                               # interactive, colourful session (all options)
 temple-guard scan https://your-app.example.com             # colourful terminal report
 temple-guard scan https://your-app.example.com -v          # verbose: each check + finding, live
+temple-guard scan https://your-app.example.com --deep      # + Docker tools (testssl, nmap, nuclei)
 temple-guard scan https://your-app.example.com --dry-run   # list the checks, send nothing
 temple-guard scan https://your-app.example.com -o report.html # collapsible HTML report (Print → PDF)
 temple-guard scan https://your-app.example.com -o report.pdf  # branded PDF (also .md / .json)

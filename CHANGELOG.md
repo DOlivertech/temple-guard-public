@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.4.0] — 2026-07-16
+### Added
+- **Email-auth check (SPF / DMARC)** — a native DNS check (dnspython) for the target
+  domain's SPF and DMARC posture (skipped for localhost / IPs). Closes the last easy
+  Blue-team gap.
+- **Docker-backed defensive tools** — `--deep` (or `--tools testssl,nmap,nuclei`) spins up
+  each tool's own container, runs it against the target, and **merges its findings into the
+  same report**: `testssl` (TLS posture), `nmap` (service / port exposure), `nuclei`
+  (misconfiguration + exposure templates). `localhost` is reached via `host.docker.internal`;
+  skipped cleanly when Docker isn't available.
+- **`temple-guard shell`** — drop into an interactive Kali container shell.
+- Interactive menu gained **Deep scan** and **Kali shell** entries.
+
 ## [0.3.3] — 2026-07-16
 ### Added
 - **Animated progress bar** while a scan runs — a live bar fills as the checks complete

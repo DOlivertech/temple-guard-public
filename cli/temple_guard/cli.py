@@ -20,8 +20,8 @@ try:  # optional — gives us the nice block wordmark; degrade gracefully if abs
 except Exception:  # pragma: no cover
     text2art = None
 
-from . import __version__
-from .checks import CHECK_PLAN, scan as run_scan
+from . import __version__, tools
+from .checks import CHECK_PLAN, SEV_RANK, scan as run_scan
 from .report import BLUE, PURPLE, make_progress_reporter, render, to_html, to_markdown, to_pdf
 
 app = typer.Typer(add_completion=False, no_args_is_help=False,
@@ -168,6 +168,55 @@ def _run(url: str, verbose: bool):
     return result
 
 
+def _resolve_tools(deep: bool, with_tools) -> list:
+    """Resolve which Docker tools to run: --deep = all defensive, --tools = a list."""
+    if with_tools:
+        wanted = [t.strip() for t in str(with_tools).replace(",", " ").split() if t.strip()]
+        return [n for n in wanted if n in tools.TOOLS]
+    return list(tools.DEFENSIVE) if deep else []
+
+
+def _run_tools(url: str, names: list, verbose: bool, quiet: bool = False) -> list:
+    """Run the selected Docker tools (each spins up its image), returning findings."""
+    ok, why = tools.docker_available()
+    if not ok:
+        if not quiet:
+            console.print(Text.assemble(("⚠ Docker unavailable — skipping Kali tools: ",
+                                         "bold #fbbf24"), (why, "dim")))
+        return []
+    if quiet:
+        out = []
+        for name in names:
+            fs, _raw, _ok = tools.run_tool(name, url)
+            out.extend(fs)
+        return out
+
+    from rich.progress import (BarColumn, Progress, SpinnerColumn, TextColumn,
+                               TimeElapsedColumn)
+    findings = []
+    with Progress(
+        SpinnerColumn(style=PURPLE),
+        TextColumn("[bold white]{task.description}"),
+        BarColumn(bar_width=None, style="#334155", complete_style=BLUE, finished_style="#4ade80"),
+        TextColumn("[dim]{task.completed}/{task.total}[/]"),
+        TimeElapsedColumn(),
+        console=console, transient=True,
+    ) as progress:
+        task = progress.add_task("kali tools", total=len(names))
+        for name in names:
+            tool = tools.TOOLS[name]
+            progress.update(task, description=f"{tool.name} — pulling / running")
+            fs, raw, okr = tools.run_tool(name, url)
+            findings.extend(fs)
+            if verbose:
+                notable = sum(1 for f in fs if f.severity in ("high", "medium"))
+                progress.console.print(Text.assemble(
+                    (f"  ⚙ {tool.name}: ", f"bold {BLUE}"),
+                    (f"{len(fs)} finding(s)" + (f", {notable} notable" if notable else ""), "white")))
+            progress.advance(task)
+    return findings
+
+
 def _write_report(result, path: Path) -> None:
     ext = path.suffix.lower()
     if ext == ".pdf":
@@ -190,12 +239,16 @@ def scan(
     url: str = typer.Argument(..., help="URL of the app to scan (your own / authorized)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run; make no requests."),
     report: Path = typer.Option(None, "--report", "-o",
-                                help="Write a report; format follows the extension (.pdf / .json / .md)."),
+                                help="Write a report; format follows the extension (.html/.pdf/.md/.json)."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show each check + finding live as it runs."),
+    deep: bool = typer.Option(False, "--deep", help="Also run the Docker defensive tools (testssl, nmap, nuclei)."),
+    with_tools: str = typer.Option(None, "--tools", "-t",
+                                   help="Comma-list of Docker tools to also run: testssl,nmap,nuclei."),
     json_out: bool = typer.Option(False, "--json", help="Emit findings as JSON (no styling)."),
     no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
 ):
-    """Run bounded, read-only defensive checks against URL and report what to fix."""
+    """Run bounded, read-only defensive checks against URL (+ optional Docker tools)."""
+    tool_names = _resolve_tools(deep, with_tools)
     if not json_out:
         _banner(animate=not no_anim and not dry_run)
         _authz_notice()
@@ -203,9 +256,16 @@ def scan(
 
     if dry_run:
         _print_dry_run(url)
+        if tool_names:
+            console.print(Text.assemble(("\nWould also run Docker tools: ", "dim"),
+                                        (", ".join(tool_names), f"bold {BLUE}"),
+                                        (" — no containers were started.", "dim")))
         raise typer.Exit()
 
     result = _run(url, verbose=verbose and not json_out)
+    if tool_names:
+        result.findings.extend(_run_tools(url, tool_names, verbose=verbose and not json_out, quiet=json_out))
+        result.findings.sort(key=lambda f: SEV_RANK.get(f.severity, 9))
 
     if json_out:
         print(json.dumps(_result_dict(result), indent=2))
@@ -218,22 +278,40 @@ def scan(
     raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
 
 
+@app.command()
+def shell(image: str = typer.Option(None, "--image", help="Container image (default: kalilinux/kali-rolling).")):
+    """Drop into an interactive Kali shell in a container (Docker required)."""
+    ok, why = tools.docker_available()
+    if not ok:
+        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        raise typer.Exit(code=1)
+    console.print(Text.assemble(("Starting a Kali shell in ", "dim"),
+                                (image or tools.KALI_SHELL_IMAGE, f"bold {BLUE}"),
+                                (" — first run pulls the image (~1 GB). Type 'exit' to leave.", "dim")))
+    _authz_notice()
+    raise typer.Exit(code=tools.kali_shell(image))
+
+
 # menu shown by the interactive entry point: (key, label, description)
 _MENU = [
-    ("1", "Scan a target", "run the read-only checks and get a report"),
-    ("2", "Dry run", "list the checks — send nothing"),
-    ("3", "What it checks", "the checks temple-guard runs"),
-    ("4", "Help", "commands & flags"),
+    ("1", "Scan a target", "the read-only native checks"),
+    ("2", "Deep scan", "native checks + Docker tools (testssl, nmap, nuclei)"),
+    ("3", "Kali shell", "interactive shell in a Kali container"),
+    ("4", "Dry run", "list the checks — send nothing"),
+    ("5", "What it checks", "the checks temple-guard runs"),
+    ("6", "Help", "commands & flags"),
     ("q", "Quit", ""),
 ]
 
 _COMMANDS = [
     ("temple-guard", "this interactive menu"),
-    ("temple-guard scan <url>", "scan a target and print a report"),
+    ("temple-guard scan <url>", "native read-only checks + report"),
     ("temple-guard scan <url> -v", "verbose — each check + finding, live"),
+    ("temple-guard scan <url> --deep", "also run Docker tools (testssl, nmap, nuclei)"),
+    ("temple-guard scan <url> --tools nmap", "run specific Docker tools"),
     ("temple-guard scan <url> --dry-run", "list the checks, send nothing"),
     ("temple-guard scan <url> -o report.html", "save a report (.html / .pdf / .md / .json)"),
-    ("temple-guard scan <url> --json", "machine-readable findings"),
+    ("temple-guard shell", "interactive Kali shell in a container"),
     ("temple-guard version", "print the version"),
     ("temple-guard --help", "full command reference"),
 ]
@@ -251,8 +329,8 @@ def _print_commands() -> None:
         console.print(Text.assemble(("  ", ""), (cmd.ljust(42), f"{BLUE}"), (desc, "dim")))
 
 
-def _scan_flow() -> None:
-    """Prompt for a target + options, run the scan, and offer to save a report."""
+def _scan_flow(deep: bool = False) -> None:
+    """Prompt for a target + options, run the scan (+ Docker tools if deep), offer to save."""
     url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
     if not url:
         console.print("[dim]No target — back to the menu.[/]")
@@ -263,12 +341,26 @@ def _scan_flow() -> None:
     verbose = Confirm.ask("Verbose live output?", default=True)
     console.print()
     result = _run(url, verbose=verbose)
+    if deep:
+        result.findings.extend(_run_tools(url, list(tools.DEFENSIVE), verbose=verbose))
+        result.findings.sort(key=lambda f: SEV_RANK.get(f.severity, 9))
     render(result, console)
     fmt = Prompt.ask("Save a report?", choices=["no", "html", "markdown", "pdf", "json"], default="no")
     if fmt != "no":
         ext = {"html": "html", "markdown": "md", "pdf": "pdf", "json": "json"}[fmt]
         path = Path(Prompt.ask("File path", default=f"temple-guard-report.{ext}"))
         _write_report(result, path)
+
+
+def _shell_flow() -> None:
+    ok, why = tools.docker_available()
+    if not ok:
+        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        return
+    console.print(Text.assemble(("Starting a Kali shell (", "dim"),
+                                (tools.KALI_SHELL_IMAGE, f"bold {BLUE}"),
+                                (") — first run pulls the image. Type 'exit' to return.", "dim")))
+    tools.kali_shell()
 
 
 @app.command()
@@ -282,22 +374,27 @@ def interactive() -> None:
         for key, label, desc in _MENU:
             console.print(Text.assemble((f"  {key}  ", f"bold {BLUE}"),
                                         (label.ljust(16), "bold white"), (desc, "dim")))
-        choice = Prompt.ask(f"[{BLUE}]Choose[/]", choices=["1", "2", "3", "4", "q"], default="1")
+        choice = Prompt.ask(f"[{BLUE}]Choose[/]", choices=["1", "2", "3", "4", "5", "6", "q"], default="1")
 
         if choice == "q":
             console.print("[dim]Bye — stay safe out there.[/]")
             raise typer.Exit()
         if choice == "1":
             console.print()
-            _scan_flow()
+            _scan_flow(deep=False)
         elif choice == "2":
+            console.print()
+            _scan_flow(deep=True)
+        elif choice == "3":
+            _shell_flow()
+        elif choice == "4":
             url = Prompt.ask(f"[{BLUE}]Target URL[/] [dim](your own / authorized)[/]").strip()
             if url:
                 console.print()
                 _print_dry_run(url)
-        elif choice == "3":
+        elif choice == "5":
             _print_checks()
-        elif choice == "4":
+        elif choice == "6":
             _print_commands()
 
 

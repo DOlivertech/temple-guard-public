@@ -5,6 +5,7 @@ returns and reports what to remediate. Nothing here exploits, floods, or brute-f
 """
 from __future__ import annotations
 
+import re
 import socket
 import ssl
 from dataclasses import dataclass, field
@@ -67,6 +68,7 @@ CHECK_PLAN = [
     ("disclosure", "Info disclosure", "Server/tech version banners exposed in responses."),
     ("exposure", "Sensitive paths", "Probes a few well-known files (/.git/config, /.env, /.well-known/security.txt)."),
     ("methods", "HTTP methods", "OPTIONS — flags risky verbs (TRACE/PUT/DELETE) exposed without auth."),
+    ("email", "Email auth (SPF/DMARC)", "The domain's SPF + DMARC DNS records — spoofing defense."),
 ]
 
 SENSITIVE_PATHS = ["/.git/config", "/.env", "/.aws/credentials", "/config.json"]
@@ -241,6 +243,11 @@ def scan(url: str, timeout: float = 10.0, on_event: EventFn = None) -> ScanResul
         pass
     done("methods", n0)
 
+    # email auth (SPF / DMARC) — DNS posture, only meaningful for real domains
+    n0 = step("email")
+    _email_auth(host, add)
+    done("email", n0)
+
     res.findings.sort(key=lambda f: SEV_RANK.get(f.severity, 9))
     return res
 
@@ -267,3 +274,56 @@ def _check_cert(host: str, port: int, add: Callable[[Finding], None]) -> None:
                     "Renew the certificate and automate renewal (e.g. ACME)."))
     except Exception:  # noqa: BLE001 — cert introspection is best-effort
         pass
+
+
+def _is_domain(host: str) -> bool:
+    """True for real DNS names (skip localhost / IP literals — no SPF/DMARC there)."""
+    if not host or host in ("localhost",):
+        return False
+    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host) or ":" in host:  # IPv4 / IPv6
+        return False
+    return "." in host
+
+
+def _txt_with(resolver, name: str, marker: str) -> Optional[str]:
+    try:
+        for rec in resolver.resolve(name, "TXT"):
+            txt = b"".join(rec.strings).decode("utf-8", "replace") if hasattr(rec, "strings") else str(rec).strip('"')
+            if marker.lower() in txt.lower():
+                return txt
+    except Exception:  # noqa: BLE001 — NXDOMAIN / no answer / timeout
+        return None
+    return None
+
+
+def _email_auth(host: str, add: Callable[[Finding], None]) -> None:
+    """Check the domain's SPF + DMARC records (spoofing defense). Skipped for
+    localhost / IPs. Best-effort — silent if DNS can't be resolved."""
+    if not _is_domain(host):
+        return
+    try:
+        import dns.resolver  # dnspython
+    except Exception:  # noqa: BLE001 — optional dep; skip cleanly if missing
+        return
+    resolver = dns.resolver.Resolver()
+    resolver.lifetime = resolver.timeout = 6.0
+
+    spf = _txt_with(resolver, host, "v=spf1")
+    if spf is None:
+        add(Finding("No SPF record", "medium", "email",
+                    f"No 'v=spf1' TXT record found on {host}.",
+                    "Publish an SPF record ending in -all so unlisted senders can't spoof the domain."))
+    elif "-all" not in spf and "~all" not in spf:
+        add(Finding("SPF not enforcing", "low", "email",
+                    f"SPF present but no -all/~all: {spf[:140]}",
+                    "End SPF with -all (hard fail) or ~all (soft fail) to actually reject spoofed senders."))
+
+    dmarc = _txt_with(resolver, "_dmarc." + host, "v=DMARC1")
+    if dmarc is None:
+        add(Finding("No DMARC record", "medium", "email",
+                    f"No 'v=DMARC1' TXT record on _dmarc.{host}.",
+                    "Publish DMARC (start at p=none for monitoring, then move to quarantine/reject)."))
+    elif "p=none" in dmarc.lower():
+        add(Finding("DMARC is monitor-only (p=none)", "low", "email",
+                    f"DMARC present but p=none: {dmarc[:140]}",
+                    "Move DMARC to p=quarantine or p=reject once your sources are aligned."))
