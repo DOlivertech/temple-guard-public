@@ -11,16 +11,16 @@ their findings into the same report.
 
 A fuzzy, type-to-filter menu — start typing to narrow it down:
 
-![temple-guard interactive menu](docs/screenshots/cli-menu.svg)
+![temple-guard interactive menu](docs/screenshots/cli-menu.png)
 
 A scan of your app: findings ranked by severity, each with evidence + remediation.
 
-![temple-guard scan report](docs/screenshots/cli-scan.svg)
+![temple-guard scan report](docs/screenshots/cli-scan.png)
 
 `--deep` merges the Docker recon tools into the same report — here `nmap` catches a database
 exposed on the host, and `wafw00f` flags that nothing sits in front of the app:
 
-![temple-guard deep scan](docs/screenshots/cli-deep-scan.svg)
+![temple-guard deep scan](docs/screenshots/cli-deep-scan.png)
 
 ## Install
 
@@ -155,7 +155,7 @@ prints the tool's raw output. (Also available as "Run a tool" in the interactive
 
 Every tool comes with an explainer — what it is, how to use it, its risks, and the key flags:
 
-![temple-guard tool explainer](docs/screenshots/cli-tool-explainer.svg)
+![temple-guard tool explainer](docs/screenshots/cli-tool-explainer.png)
 
 ## Dry run — preview any action
 
@@ -168,7 +168,7 @@ temple-guard shell --dry-run               # the shell container command
 ```
 In the interactive menu, flip **Dry-run: ON** and every choice becomes preview-only.
 
-![temple-guard dry run](docs/screenshots/cli-dry-run.svg)
+![temple-guard dry run](docs/screenshots/cli-dry-run.png)
 
 ## Interactive Kali shell
 ```bash
