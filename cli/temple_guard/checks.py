@@ -9,6 +9,7 @@ import socket
 import ssl
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Callable, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -58,7 +59,7 @@ SECURITY_HEADERS = [
      "Set a Permissions-Policy to disable unused browser features (camera, geolocation, …)."),
 ]
 
-# The read-only checks this tool runs — also used to render --dry-run.
+# The read-only checks this tool runs — also used to render --dry-run and verbose steps.
 CHECK_PLAN = [
     ("transport", "HTTPS / TLS", "Is the app served over HTTPS with a valid, current certificate?"),
     ("headers", "Security headers", "CSP, HSTS, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy."),
@@ -70,6 +71,9 @@ CHECK_PLAN = [
 
 SENSITIVE_PATHS = ["/.git/config", "/.env", "/.aws/credentials", "/config.json"]
 
+# on_event(kind, **data): kind in {"step","finding","clean","unreachable"}.
+EventFn = Optional[Callable[..., None]]
+
 
 def _host_port(url: str) -> tuple[str, int, bool]:
     u = urlparse(url if "://" in url else "https://" + url)
@@ -77,12 +81,40 @@ def _host_port(url: str) -> tuple[str, int, bool]:
     return u.hostname or "", u.port or (443 if https else 80), https
 
 
-def scan(url: str, timeout: float = 10.0) -> ScanResult:
-    """Run all defensive checks against `url` and return findings + remediation."""
+def scan(url: str, timeout: float = 10.0, on_event: EventFn = None) -> ScanResult:
+    """Run all defensive checks against `url` and return findings + remediation.
+
+    If `on_event` is given it is called as the scan runs so callers can show live,
+    verbose progress:
+      * on_event("step", category=…, name=…, desc=…)  — a check group is starting
+      * on_event("finding", finding=Finding)           — a finding was surfaced
+      * on_event("clean", category=…, name=…)          — a group finished clean
+      * on_event("unreachable", url=…, error=…)        — the target didn't respond
+    """
+    plan = {cat: (name, desc) for cat, name, desc in CHECK_PLAN}
+
+    def emit(kind: str, **kw) -> None:
+        if on_event:
+            on_event(kind, **kw)
+
     if "://" not in url:
         url = "https://" + url
     res = ScanResult(url=url)
     host, port, https = _host_port(url)
+
+    def add(f: Finding) -> None:
+        res.findings.append(f)
+        emit("finding", finding=f)
+
+    def step(cat: str) -> int:
+        name, desc = plan.get(cat, (cat, ""))
+        emit("step", category=cat, name=name, desc=desc)
+        return len(res.findings)
+
+    def done(cat: str, n0: int) -> None:
+        if len(res.findings) == n0:
+            name, _ = plan.get(cat, (cat, ""))
+            emit("clean", category=cat, name=name)
 
     try:
         with httpx.Client(timeout=timeout, verify=True, follow_redirects=True,
@@ -93,13 +125,15 @@ def scan(url: str, timeout: float = 10.0) -> ScanResult:
         try:
             with httpx.Client(timeout=timeout, verify=False, follow_redirects=True) as c:
                 r = c.get(url)
-            res.findings.append(Finding(
+            step("transport")
+            add(Finding(
                 "TLS certificate not trusted", "high", "transport",
                 f"{host}:{port} — certificate failed verification ({exc}).",
                 "Install a valid CA-signed certificate; renew before expiry."))
         except Exception as exc2:  # noqa: BLE001
             res.reachable = False
             res.error = str(exc2)
+            emit("unreachable", url=url, error=res.error)
             return res
 
     res.status = r.status_code
@@ -107,47 +141,56 @@ def scan(url: str, timeout: float = 10.0) -> ScanResult:
     res.server = headers.get("server", "")
 
     # transport
+    n0 = step("transport")
     if not https:
-        res.findings.append(Finding(
+        add(Finding(
             "App served over plain HTTP", "high", "transport",
             f"{url} responded on HTTP without TLS.",
             "Serve exclusively over HTTPS and redirect HTTP→HTTPS; add HSTS."))
-    elif https:
-        _check_cert(res, host, port)
+    else:
+        _check_cert(host, port, add)
+    done("transport", n0)
 
     # security headers
+    n0 = step("headers")
     for key, name, sev, fix in SECURITY_HEADERS:
         if key not in headers:
-            res.findings.append(Finding(
+            add(Finding(
                 f"Missing security header: {name}", sev, "headers",
                 f"Response from {url} did not include '{name}'.", fix))
+    done("headers", n0)
 
     # cookies
+    n0 = step("cookies")
     cookies = r.headers.get_list("set-cookie") if hasattr(r.headers, "get_list") else \
         [v for k, v in r.headers.multi_items() if k.lower() == "set-cookie"]
     for ck in cookies:
-        name = ck.split("=", 1)[0]
+        cname = ck.split("=", 1)[0]
         low = ck.lower()
         missing = [a for a in ("secure", "httponly", "samesite") if a not in low]
         if missing:
-            res.findings.append(Finding(
-                f"Cookie '{name}' missing: {', '.join(missing)}", "medium", "cookies",
+            add(Finding(
+                f"Cookie '{cname}' missing: {', '.join(missing)}", "medium", "cookies",
                 ck[:160],
                 "Set Secure + HttpOnly + SameSite=Lax/Strict on session cookies."))
+    done("cookies", n0)
 
     # info disclosure
+    n0 = step("disclosure")
     if res.server and any(ch.isdigit() for ch in res.server):
-        res.findings.append(Finding(
+        add(Finding(
             f"Server version disclosed: {res.server}", "low", "disclosure",
             f"Server header: {res.server}",
             "Suppress version banners (Server / X-Powered-By) to slow attacker recon."))
     if "x-powered-by" in headers:
-        res.findings.append(Finding(
+        add(Finding(
             f"Technology disclosed via X-Powered-By: {headers['x-powered-by']}", "low",
             "disclosure", f"X-Powered-By: {headers['x-powered-by']}",
             "Remove the X-Powered-By header."))
+    done("disclosure", n0)
 
     # sensitive path exposure
+    n0 = step("exposure")
     base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
     try:
         with httpx.Client(timeout=timeout, verify=False, follow_redirects=False) as c:
@@ -155,7 +198,7 @@ def scan(url: str, timeout: float = 10.0) -> ScanResult:
                 try:
                     pr = c.get(base + p)
                     if pr.status_code == 200 and pr.content:
-                        res.findings.append(Finding(
+                        add(Finding(
                             f"Sensitive file exposed: {p}", "high", "exposure",
                             f"GET {base}{p} → 200 ({len(pr.content)} bytes)",
                             "Remove the file from the web root or block it at the edge."))
@@ -163,26 +206,29 @@ def scan(url: str, timeout: float = 10.0) -> ScanResult:
                     pass
     except Exception:  # noqa: BLE001
         pass
+    done("exposure", n0)
 
     # methods
+    n0 = step("methods")
     try:
         with httpx.Client(timeout=timeout, verify=False) as c:
             opt = c.request("OPTIONS", url)
             allow = opt.headers.get("allow", "")
             risky = [m for m in ("TRACE", "PUT", "DELETE", "CONNECT") if m in allow.upper()]
             if risky:
-                res.findings.append(Finding(
+                add(Finding(
                     f"Risky HTTP methods advertised: {', '.join(risky)}", "medium", "methods",
                     f"OPTIONS {url} → Allow: {allow}",
                     "Disable TRACE/TRACK; restrict PUT/DELETE to authenticated APIs."))
     except httpx.HTTPError:
         pass
+    done("methods", n0)
 
     res.findings.sort(key=lambda f: SEV_RANK.get(f.severity, 9))
     return res
 
 
-def _check_cert(res: ScanResult, host: str, port: int) -> None:
+def _check_cert(host: str, port: int, add: Callable[[Finding], None]) -> None:
     try:
         ctx = ssl.create_default_context()
         with socket.create_connection((host, port), timeout=6) as sock:
@@ -193,12 +239,12 @@ def _check_cert(res: ScanResult, host: str, port: int) -> None:
             exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
             days = (exp - datetime.now(timezone.utc)).days
             if days < 0:
-                res.findings.append(Finding(
+                add(Finding(
                     "TLS certificate expired", "high", "transport",
                     f"Certificate expired {abs(days)} days ago ({not_after}).",
                     "Renew the certificate immediately and automate renewal."))
             elif days < 21:
-                res.findings.append(Finding(
+                add(Finding(
                     f"TLS certificate expiring soon ({days}d)", "medium", "transport",
                     f"Certificate valid until {not_after}.",
                     "Renew the certificate and automate renewal (e.g. ACME)."))

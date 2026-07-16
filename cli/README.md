@@ -17,7 +17,7 @@ repo's **Releases**, then follow your platform:
 brew install pipx            # if you don't already have pipx
 pipx ensurepath              # once — then open a new terminal
 
-pipx install ./temple_guard-0.1.0-py3-none-any.whl
+pipx install ./temple_guard-0.2.0-py3-none-any.whl
 ```
 
 ### Windows (PowerShell)
@@ -25,30 +25,49 @@ pipx install ./temple_guard-0.1.0-py3-none-any.whl
 py -m pip install --user pipx    # if you don't already have pipx
 py -m pipx ensurepath            # once — then open a new terminal
 
-pipx install .\temple_guard-0.1.0-py3-none-any.whl
+pipx install .\temple_guard-0.2.0-py3-none-any.whl
 ```
 
 ### Linux / other
 ```bash
 python3 -m pip install --user pipx && python3 -m pipx ensurepath
-pipx install ./temple_guard-0.1.0-py3-none-any.whl
+pipx install ./temple_guard-0.2.0-py3-none-any.whl
 ```
 
 Once it's published to PyPI you'll be able to skip the wheel and just
 `pipx install temple-guard`. Prefer not to use pipx? `pip install
-./temple_guard-0.1.0-py3-none-any.whl` works too (ideally inside a virtualenv).
+./temple_guard-0.2.0-py3-none-any.whl` works too (ideally inside a virtualenv).
 
 **Manage it:** `pipx upgrade temple-guard` · `pipx uninstall temple-guard`.
 
 ## Usage
+
+**Interactive** — a colourful session that lists every check, then walks you through
+the target and options (dry-run, verbose, save format):
 ```bash
-temple-guard scan https://your-app.example.com               # colourful terminal report
-temple-guard scan https://your-app.example.com --dry-run     # list the checks, send nothing
-temple-guard scan https://your-app.example.com -o report.md  # write a markdown report
-temple-guard scan https://your-app.example.com --json        # machine-readable findings
+temple-guard                 # bare command launches it — or: temple-guard interactive
+```
+
+**Direct** — scan straight away:
+```bash
+temple-guard scan https://your-app.example.com                # colourful report
+temple-guard scan https://your-app.example.com -v             # verbose: show each check + finding live
+temple-guard scan https://your-app.example.com --dry-run      # list the checks, send nothing
+temple-guard scan https://your-app.example.com -o report.pdf  # write a report (see formats below)
+temple-guard scan https://your-app.example.com --json         # machine-readable findings
 temple-guard version
 ```
-It exits non-zero when a **HIGH** finding is present, so it slots straight into CI.
+
+`-o / --report` picks the format from the file **extension**:
+
+| Extension | Output |
+|---|---|
+| `.pdf` | A clean, branded PDF (self-contained — no browser needed) |
+| `.md`  | Markdown (table + evidence) |
+| `.json`| Machine-readable findings |
+
+`-v / --verbose` streams each check and every finding as it happens. The scan exits
+non-zero when a **HIGH** finding is present, so it slots straight into CI.
 
 > ⚠️ **Authorized use only** — run this against applications you own or have explicit
 > written permission to test.
