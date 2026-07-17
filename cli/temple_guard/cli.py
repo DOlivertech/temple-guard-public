@@ -807,6 +807,36 @@ def _tool_flow(dry: bool = False) -> None:
 
 
 @app.command()
+def monitor(
+    urls: list[str] = typer.Argument(None, help="Targets to scan concurrently (space-separated)."),
+    workers: int = typer.Option(4, "--workers", "-w", help="Max scans running at once."),
+):
+    """Live dashboard — run several scans at once and watch/stop/restart them.
+
+    temple-guard monitor https://a.example.com https://b.example.com
+    """
+    from . import monitor as _mon
+    targets = [_norm_target(u, "url") for u in (urls or []) if u and u.strip()]
+    _mon.run(targets, workers=workers)
+
+
+def _monitor_flow() -> None:
+    raw = Prompt.ask(f"[{BLUE}]Targets to monitor[/] "
+                     f"[dim](space/comma separated — e.g. https://a.com https://b.com; blank = back)[/]",
+                     default="").strip()
+    targets = [_norm_target(u, "url") for u in re.split(r"[\s,]+", raw) if u]
+    if not targets:
+        console.print("[dim]No targets — back to the menu.[/]")
+        return
+    _authz_notice()
+    console.print(Text.assemble(("Launching monitor for ", "dim"),
+                                (f"{len(targets)} scan(s)", f"bold {BLUE}"),
+                                (" — q/Esc to exit the dashboard.", "dim")))
+    from . import monitor as _mon
+    _mon.run(targets, workers=4)
+
+
+@app.command()
 def interactive() -> None:
     """Interactive, colourful menu — fuzzy-pick what to run. Esc = back · Ctrl+C = quit."""
     _banner(animate=True)
@@ -823,6 +853,7 @@ def interactive() -> None:
             items = [
                 ("1", "Scan a target", "read-only native checks"),
                 ("2", "Deep scan", "native checks + Docker recon tools"),
+                ("m", "Monitor", "live dashboard — run several scans at once"),
                 ("3", "Run a tool", "one Kali tool with your own arguments"),
                 ("4", "Kali shell", "interactive shell in a Kali container"),
                 ("5", "What it checks", "list the checks temple-guard runs"),
@@ -844,6 +875,8 @@ def interactive() -> None:
                 _scan_flow(deep=False, dry=dry)
             elif choice == "2":
                 _scan_flow(deep=True, dry=dry)
+            elif choice == "m":
+                _monitor_flow()
             elif choice == "3":
                 _tool_flow(dry=dry)
             elif choice == "4":

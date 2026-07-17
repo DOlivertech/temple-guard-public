@@ -219,7 +219,8 @@ Dev quick-reference:
   with `python -m py_compile cli/temple_guard/*.py`.
 - **Layout:** `cli.py` (Typer commands + interactive menu + `TOOL_GUIDE` guided prompts),
   `checks.py` (`CHECK_PLAN` + `scan()` events), `tools.py` (`TOOLS`, `run_tool`/`run_raw`/
-  `kali_shell`, host-IPv4 remap + dry-run command preview), `report.py` (render + HTML/PDF/MD).
+  `kali_shell`, host-IPv4 remap + dry-run command preview), `report.py` (render + HTML/PDF/MD),
+  `monitor.py` (live btop-style dashboard — concurrent `checks.scan()` via a thread pool + Rich `Live`).
 - **Add a Docker tool:** append a `Tool(...)` to `tools.TOOLS` (image, `argv` builder,
   `parse`→`[Finding]`, and the `what/usage/risk/flags` strings), add it to `DEFENSIVE` if it
   belongs under `--deep`, and add a `TOOL_GUIDE[name]` entry in `cli.py` for the guided flow.

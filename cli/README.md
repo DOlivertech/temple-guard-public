@@ -116,6 +116,28 @@ expand/collapse findings, and **Print / Save PDF** for a polished PDF:
 `-v / --verbose` streams each check and every finding as it happens. The scan exits
 non-zero when a **HIGH** finding is present, so it slots straight into CI.
 
+## Monitor — run several scans at once
+
+`temple-guard` can run **multiple scans concurrently** and watch them in a live,
+btop-style dashboard:
+```bash
+temple-guard monitor https://a.example.com https://b.example.com   # scan both at once
+temple-guard monitor https://a.example.com -w 8                    # up to 8 concurrent
+```
+Or pick **Monitor** from the interactive menu. The dashboard shows animated progress bars, a
+findings-severity meter, an activity sparkline, per-scan status, and a live log stream.
+
+| Key | Action |
+|---|---|
+| `↑` `↓` / `j` `k` | select a scan |
+| `s` | stop the selected scan |
+| `r` | restart the selected scan |
+| `n` | queue a new target |
+| `q` / `Esc` | quit the dashboard |
+
+Every row is a real scan running in its own thread — no mock data. Without an interactive
+terminal (a pipe / CI) it falls back to a headless run and prints a summary.
+
 ## Deep scan — Docker tools (optional)
 
 With **Docker** running, add real tool containers to any scan; their findings merge into

@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.6.0] — 2026-07-16
+### Added
+- **Live monitor** — `temple-guard monitor <urls…>` (or **Monitor** in the interactive menu)
+  opens a **btop-style dashboard** that runs **several scans at once** and shows them live:
+  animated progress bars, a findings-severity meter, an activity sparkline, a status panel,
+  and a live log stream. **Stop / restart** individual scans and **queue new** ones (`s` /
+  `r` / `n`) without leaving; **↑↓/jk** to select, **q / Esc** to quit. Real data only — each
+  row is an actual `checks.scan()` in its own thread (`monitor.py`). No TTY → headless run +
+  summary (for pipes / CI). No new dependency (built on Rich `Live`).
+
 ## [0.5.4] — 2026-07-16
 ### Changed
 - **Clearer, consistent menu navigation.** Every interactive prompt now spells out its keys,

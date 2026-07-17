@@ -59,8 +59,9 @@ report. Everything lives in `cli/`; it ships to end users via `pipx`.
 - **Package `cli/temple_guard/`:** `cli.py` (Typer app, commands, interactive menu,
   `TOOL_GUIDE` guided prompts), `checks.py` (native read-only checks, `CHECK_PLAN`, `scan()`
   + progress events), `tools.py` (`TOOLS` registry of Docker-backed tools), `report.py`
-  (terminal / Markdown / PDF / collapsible-HTML render). **The version lives in BOTH
-  `cli/temple_guard/__init__.py` and `cli/pyproject.toml`** — bump them together.
+  (terminal / Markdown / PDF / collapsible-HTML render), `monitor.py` (live btop-style
+  multi-scan dashboard — concurrent scans via a thread pool + Rich `Live`). **The version
+  lives in BOTH `cli/temple_guard/__init__.py` and `cli/pyproject.toml`** — bump them together.
 - **Dev install:** `pipx install --force --editable cli` → the `temple-guard` command runs
   live from source. Deps: httpx · rich · typer · art · fpdf2 · dnspython · InquirerPy.
 - **Native checks** (no Docker; one bounded request each): HTTPS/TLS + certificate, security
@@ -76,6 +77,9 @@ report. Everything lives in `cli/`; it ships to end users via `pipx`.
   the numbered fallback). "Run a tool" is **guided** — options become numbered prompts /
   yes-no, the target is validated + normalized, and a "Run this?" confirm precedes execution.
   **Every** action has a `--dry-run`; `temple-guard update` self-updates from the git repo.
+- **Monitor:** `temple-guard monitor <urls…>` (or the "Monitor" menu item) runs several scans
+  concurrently in a live btop-style dashboard — animated progress, findings meter, live logs;
+  `↑↓` select, `s`/`r`/`n` stop/restart/new, `q` quit. Non-TTY → headless run + summary.
 - **Reports:** `-o report.{html,pdf,md,json}` — HTML is collapsible + Print-to-PDF, PDF via
   fpdf2 (no browser). README terminal screenshots live in `cli/docs/screenshots/`.
 - **Extend:** a Docker tool = a `Tool(...)` in `tools.TOOLS` (image · `argv` builder ·
