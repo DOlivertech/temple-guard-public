@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.5.4] — 2026-07-16
+### Changed
+- **Clearer, consistent menu navigation.** Every interactive prompt now spells out its keys,
+  and the two were swapped to match expectations: **Esc = back** (cancel the current
+  menu/step) and **Ctrl+C = quit** (clean exit from anywhere). Menus show a visible
+  **← Back** entry, the guided prompts take **`b` = back** (blank = back on text prompts), and
+  the fuzzy picker footer reads "Esc = back · Ctrl+C = quit".
+
 ## [0.5.3] — 2026-07-16
 ### Fixed
 - **Guided-tool target: validation + a clearer prompt.** The target prompt showed a dim

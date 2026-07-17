@@ -81,9 +81,9 @@ terminal** (or `source ~/.zshrc` / `~/.bashrc`) for the change to take effect. V
 ## Usage
 
 **Interactive** — a colourful session with a **fuzzy, type-to-filter menu** (fzy/fzf-style:
-start typing to narrow the options, ↑↓ to move, enter to pick). It walks you through the
-target and options (verbose, save format), and a **Dry-run toggle** makes *every* action
-preview-only:
+start typing to narrow the options, ↑↓ to move, enter to pick; **Esc = back, Ctrl+C = quit**).
+It walks you through the target and options (verbose, save format), and a **Dry-run toggle**
+makes *every* action preview-only:
 ```bash
 temple-guard                 # bare command launches it — or: temple-guard interactive
 ```

@@ -129,8 +129,8 @@ def _authz_notice() -> None:
 
 def _pick(message: str, items: list, default: str = None):
     """Fuzzy, type-to-filter selector (fzy / fzf-style). `items` = [(value, label, desc)].
-    Returns the chosen value, or None if cancelled. Falls back to a numbered rich prompt
-    when a fuzzy TTY isn't available (or TG_NO_FUZZY is set)."""
+    **Esc** returns None (go back); **Ctrl+C** bubbles up to quit. Falls back to a numbered
+    rich prompt when a fuzzy TTY isn't available (or TG_NO_FUZZY is set)."""
     if sys.stdin.isatty() and console.is_terminal and not os.environ.get("TG_NO_FUZZY"):
         try:
             from InquirerPy import inquirer
@@ -139,15 +139,16 @@ def _pick(message: str, items: list, default: str = None):
             return inquirer.fuzzy(
                 message=message, choices=choices, border=True,
                 max_height="70%", cycle=True, pointer="❯", qmark="›", amark="›",
-                instruction="(type to filter · ↑↓ move · enter select · esc cancel)",
+                mandatory=False, keybindings={"skip": [{"key": "escape"}]},   # Esc → skip → None (back)
+                instruction="(type to filter · ↑↓ move · enter select)",
+                long_instruction="Esc = back      Ctrl+C = quit",
             ).execute()
-        except KeyboardInterrupt:
-            return None
-        except Exception:  # any TTY / import issue → graceful fallback
+        except Exception:  # TTY / import issue → numbered fallback (Ctrl+C bubbles, not caught here)
             pass
     console.print(Text(f"\n{message}", style=f"bold {PURPLE}"))
     for v, lbl, d in items:
         console.print(Text.assemble((f"  {v}  ", f"bold {BLUE}"), (lbl.ljust(16), "bold white"), (d, "dim")))
+    console.print(Text("  Ctrl+C = quit", style="dim"))
     keys = [v for v, _, _ in items]
     return Prompt.ask(f"[{BLUE}]Choose[/]", choices=keys, default=default or keys[0])
 
@@ -584,7 +585,7 @@ def _scan_flow(deep: bool = False, dry: bool = False) -> None:
     """Prompt for a target + options, run the scan (+ Docker tools if deep), offer to save.
     In dry mode: print the checks + tool commands that would run, and run nothing."""
     url = Prompt.ask(f"[{BLUE}]Target URL[/] "
-                     f"[dim](e.g. https://beta.example.com — blank to cancel)[/]").strip()
+                     f"[dim](e.g. https://beta.example.com — blank = back)[/]").strip()
     if not url:
         console.print("[dim]No target — back to the menu.[/]")
         return
@@ -702,12 +703,14 @@ TOOL_GUIDE = {
 
 
 def _ask_choice(prompt: str, choices: list):
-    """Numbered pick from (label, tokens) pairs; default is the first. Returns the tokens."""
+    """Numbered pick from (label, tokens) pairs; default = first, 'b' = back.
+    Returns the tokens, or None to go back."""
     console.print(Text(f"\n{prompt}", style=f"bold {BLUE}"))
     for i, (label, _tokens) in enumerate(choices, 1):
         console.print(Text.assemble((f"  {i}  ", f"bold {BLUE}"), (label, "white")))
-    idx = Prompt.ask("Pick", choices=[str(i) for i in range(1, len(choices) + 1)], default="1")
-    return choices[int(idx) - 1][1]
+    console.print(Text("  b  ← back", style="dim"))
+    idx = Prompt.ask("Pick", choices=[str(i) for i in range(1, len(choices) + 1)] + ["b"], default="1")
+    return None if idx == "b" else choices[int(idx) - 1][1]
 
 
 def _norm_target(val: str, kind: str) -> str:
@@ -734,7 +737,7 @@ def _ask_target(tgt: dict):
     kind = tgt.get("kind", "url")
     for _ in range(3):
         raw = Prompt.ask(f"[{BLUE}]{tgt['prompt']}[/] "
-                         f"[dim](e.g. {tgt.get('eg', 'example.com')} — blank to cancel)[/]").strip()
+                         f"[dim](e.g. {tgt.get('eg', 'example.com')} — blank = back)[/]").strip()
         if not raw:
             return None
         if " " in raw or "," in raw:
@@ -758,7 +761,10 @@ def _guided_tool_args(name: str):
     argv = list(guide.get("base", []))
     for step in guide["steps"]:
         if "choices" in step:
-            argv += _ask_choice(step["ask"], step["choices"])
+            toks = _ask_choice(step["ask"], step["choices"])
+            if toks is None:        # 'b' → back out of the guided flow
+                return None
+            argv += toks
         elif Confirm.ask(step["ask"], default=step.get("default", False)):
             argv += step["flag"]
     extra = Prompt.ask("[dim]Extra flags (optional — blank for none)[/]", default="").strip()
@@ -773,9 +779,11 @@ def _tool_flow(dry: bool = False) -> None:
         if not ok:
             console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
             return
-    name = _pick("Which tool?", [(k, t.name, t.desc) for k, t in tools.TOOLS.items()], default="nmap")
-    if not name:
-        console.print("[dim]No tool selected — back to the menu.[/]")
+    picker = [(k, t.name, t.desc) for k, t in tools.TOOLS.items()]
+    picker.append(("__back__", "← Back to menu", ""))
+    name = _pick("Which tool?", picker, default="nmap")
+    if not name or name == "__back__":   # None = Esc
+        console.print("[dim]Back to the menu.[/]")
         return
     _describe_tool(name, brief=True)
     console.print("[dim]Answer a few questions — temple-guard builds the command for you "
@@ -800,50 +808,55 @@ def _tool_flow(dry: bool = False) -> None:
 
 @app.command()
 def interactive() -> None:
-    """Interactive, colourful menu — fuzzy-pick what to run (type to filter)."""
+    """Interactive, colourful menu — fuzzy-pick what to run. Esc = back · Ctrl+C = quit."""
     _banner(animate=True)
     _authz_notice()
+    console.print(Text("  keys: type to filter · ↑↓ move · Enter select · Esc = back · Ctrl+C = quit",
+                       style="dim"))
     dry = False
+    try:
+        while True:
+            if dry:
+                console.print(Text.assemble(
+                    ("\n ● DRY-RUN ", "bold #fbbf24 reverse"),
+                    ("  every action is previewed — nothing is sent or run.", "italic #fbbf24")))
+            items = [
+                ("1", "Scan a target", "read-only native checks"),
+                ("2", "Deep scan", "native checks + Docker recon tools"),
+                ("3", "Run a tool", "one Kali tool with your own arguments"),
+                ("4", "Kali shell", "interactive shell in a Kali container"),
+                ("5", "What it checks", "list the checks temple-guard runs"),
+                ("6", "Help", "commands & flags"),
+                ("7", "Update", "pull the newest temple-guard from its repo"),
+                ("d", f"Dry-run: {'ON' if dry else 'OFF'}", "toggle preview-only mode for every action"),
+                ("q", "Quit", "or Esc / Ctrl+C"),
+            ]
+            choice = _pick("What would you like to do?", items, default="1")
 
-    while True:
-        if dry:
-            console.print(Text.assemble(
-                ("\n ● DRY-RUN ", "bold #fbbf24 reverse"),
-                ("  every action is previewed — nothing is sent or run.", "italic #fbbf24")))
-        items = [
-            ("1", "Scan a target", "read-only native checks"),
-            ("2", "Deep scan", "native checks + Docker recon tools"),
-            ("3", "Run a tool", "one Kali tool with your own arguments"),
-            ("4", "Kali shell", "interactive shell in a Kali container"),
-            ("5", "What it checks", "list the checks temple-guard runs"),
-            ("6", "Help", "commands & flags"),
-            ("7", "Update", "pull the newest temple-guard from its repo"),
-            ("d", f"Dry-run: {'ON' if dry else 'OFF'}", "toggle preview-only mode for every action"),
-            ("q", "Quit", ""),
-        ]
-        choice = _pick("What would you like to do?", items, default="1")
-
-        if choice in (None, "q"):
-            console.print("[dim]Bye — stay safe out there.[/]")
-            raise typer.Exit()
-        if choice == "d":
-            dry = not dry
-            continue
-        console.print()
-        if choice == "1":
-            _scan_flow(deep=False, dry=dry)
-        elif choice == "2":
-            _scan_flow(deep=True, dry=dry)
-        elif choice == "3":
-            _tool_flow(dry=dry)
-        elif choice == "4":
-            _shell_flow(dry=dry)
-        elif choice == "5":
-            _print_checks()
-        elif choice == "6":
-            _print_commands()
-        elif choice == "7":
-            _do_update(check=True) if dry else _do_update()
+            if choice in (None, "q"):   # None = Esc at the top level → exit
+                console.print("[dim]Bye — stay safe out there.[/]")
+                raise typer.Exit()
+            if choice == "d":
+                dry = not dry
+                continue
+            console.print()
+            if choice == "1":
+                _scan_flow(deep=False, dry=dry)
+            elif choice == "2":
+                _scan_flow(deep=True, dry=dry)
+            elif choice == "3":
+                _tool_flow(dry=dry)
+            elif choice == "4":
+                _shell_flow(dry=dry)
+            elif choice == "5":
+                _print_checks()
+            elif choice == "6":
+                _print_commands()
+            elif choice == "7":
+                _do_update(check=True) if dry else _do_update()
+    except KeyboardInterrupt:   # Ctrl+C anywhere in the session → clean quit
+        console.print("\n[dim]Bye — stay safe out there.[/]")
+        raise typer.Exit()
 
 
 @app.command()
