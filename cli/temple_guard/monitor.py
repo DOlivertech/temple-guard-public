@@ -173,8 +173,14 @@ LEVEL_FOR_SEV = {"high": "ERR", "medium": "WRN", "low": "INF", "info": "INF"}
 
 # ── rendering ────────────────────────────────────────────────────────────────
 def _saber() -> Text:
-    """A little gold double-bladed lightsaber (the Temple Guard saberstaff)."""
-    return Text.assemble(("●", TIP), ("━━", GOLD), ("█", STEEL), ("━━", GOLD), ("●", TIP))
+    """A little gold lightsaber — a steel hilt (left) with a single blade extending out."""
+    return Text.assemble(
+        ("▪", STEEL),            # pommel cap
+        ("▬▬", STEEL),           # hilt — a stubby steel rectangle (the grip)
+        ("▮", GOLD),             # emitter — where the blade ignites
+        ("━━━━━", GOLD),          # the blade
+        ("╾", TIP),              # glowing tip
+    )
 
 
 def _fmt_age(secs: float) -> str:
@@ -342,11 +348,19 @@ def _render(mgr: TaskManager, sel: int, tick: int, body_h: int) -> Layout:
 
 # ── keyboard ─────────────────────────────────────────────────────────────────
 class _Keys(threading.Thread):
-    """Reads single keypresses (Unix cbreak) and mutates the shared state dict."""
+    """Reads single keypresses (Unix cbreak) and mutates the shared state dict.
+
+    While a line prompt is open (adding targets / naming a report) the reader must
+    step aside — otherwise it keeps stdin in no-echo cbreak mode *and* consumes the
+    keystrokes meant for the prompt. `pause()` restores cooked/echo mode and stops
+    reading; `resume()` returns to single-key mode.
+    """
 
     def __init__(self, state: dict, mgr: TaskManager):
         super().__init__(daemon=True)
         self.state, self.mgr = state, mgr
+        self._pause = threading.Event()   # set → step aside for a line prompt
+        self._acked = threading.Event()   # reader confirms it's in cooked mode
 
     def run(self) -> None:
         try:
@@ -360,12 +374,36 @@ class _Keys(threading.Thread):
         try:
             tty.setcbreak(fd)
             while not self.state["quit"]:
+                if self._pause.is_set():
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old)   # cooked mode → prompts echo
+                    self._acked.set()
+                    while self._pause.is_set() and not self.state["quit"]:
+                        time.sleep(0.05)
+                    self._acked.clear()
+                    if self.state["quit"]:
+                        break
+                    tty.setcbreak(fd)                               # back to single-key mode
+                    continue
                 if select.select([sys.stdin], [], [], 0.15)[0]:
+                    if self._pause.is_set():
+                        continue   # a prompt just opened — leave the byte for it
                     self._handle(sys.stdin.read(1), select, termios)
         except Exception:  # noqa: BLE001
             pass
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    def pause(self) -> None:
+        """Restore cooked/echo mode and stop consuming stdin, for a line prompt."""
+        if not self.is_alive():
+            return
+        self._acked.clear()
+        self._pause.set()
+        self._acked.wait(timeout=1.0)
+
+    def resume(self) -> None:
+        """Return to single-key (cbreak) mode after a line prompt."""
+        self._pause.clear()
 
     def _handle(self, ch: str, select, termios) -> None:  # noqa: ANN001
         s, m = self.state, self.mgr
@@ -461,12 +499,15 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str 
             while not state["quit"]:
                 if state["add"]:                    # 'n' — add one or more targets, mid-run
                     state["add"] = False
+                    keys.pause()                    # step the key-reader aside so typing echoes
                     live.stop()
                     for u in _prompt_targets(console):
                         mgr.add(u)
                     live.start(refresh=True)
+                    keys.resume()
                 if state["report"]:                 # 'w' — write ONE combined report for all scans
                     state["report"] = False
+                    keys.pause()
                     live.stop()
                     dest = _prompt_report_path(console)
                     if dest:
@@ -478,6 +519,7 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str 
                             console.print("[dim]No completed scans to report yet.[/]")
                         time.sleep(1.4)
                     live.start(refresh=True)
+                    keys.resume()
                 state["sel"] = min(state["sel"], max(len(mgr.tasks) - 1, 0))
                 live.update(_render(mgr, state["sel"], tick, body_h))
                 time.sleep(0.1)

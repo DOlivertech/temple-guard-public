@@ -14,6 +14,14 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
 - **Combined monitor report.** Press **`w`** in the dashboard (or `temple-guard monitor
   <urls…> -o report.html`) to write **one** report across every scan — a summary table +
   per-target severity cards and findings, in `.html` / `.md` / `.json`.
+### Fixed
+- **Add-target prompt is now visible.** Pressing **`n`** (or **`w`**) opened a line prompt
+  while the dashboard's single-key reader was still holding the terminal in no-echo `cbreak`
+  mode *and* consuming stdin — so the target you typed was invisible and stray keystrokes
+  could trigger dashboard actions. The reader now steps aside (restoring cooked/echo mode) for
+  the duration of any prompt, then resumes single-key control.
+- **Single-bladed saber.** The monitor's little lightsaber mark was a double-bladed saberstaff;
+  it's now a single gold blade extending from a steel hilt.
 
 ## [0.6.0] — 2026-07-16
 ### Added
