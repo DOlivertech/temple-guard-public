@@ -14,6 +14,12 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
 - **Combined monitor report.** Press **`w`** in the dashboard (or `temple-guard monitor
   <urls…> -o report.html`) to write **one** report across every scan — a summary table +
   per-target severity cards and findings, in `.html` / `.md` / `.json`.
+- **Pick what runs against each target.** Adding a target in the dashboard (**`n`**) now asks
+  what to run: **Native checks**, **Deep** (native + the Docker recon set — whatweb, wafw00f,
+  testssl, nmap, nuclei), or **Pick tools…** (native + specific tools). Tool findings merge into
+  the live counters and the combined report, and the chosen profile shows as a gold tag next to
+  the target. For scripted runs, `temple-guard monitor <urls…> --deep` / `--tools nmap,nuclei`
+  preload a profile onto the given targets.
 ### Fixed
 - **Add-target prompt is now visible.** Pressing **`n`** (or **`w`**) opened a line prompt
   while the dashboard's single-key reader was still holding the terminal in no-echo `cbreak`

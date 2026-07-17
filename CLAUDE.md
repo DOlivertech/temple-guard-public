@@ -79,7 +79,10 @@ report. Everything lives in `cli/`; it ships to end users via `pipx`.
   **Every** action has a `--dry-run`; `temple-guard update` self-updates from the git repo.
 - **Monitor:** `temple-guard monitor <urls…>` (or the "Monitor" menu item) runs several scans
   concurrently in a live btop-style dashboard — animated progress, findings meter, live logs;
-  `↑↓` select, `s`/`r`/`n` stop/restart/new, `q` quit. Non-TTY → headless run + summary.
+  `↑↓` select, `s`/`r`/`n` stop/restart/new, `w` combined report, `q` quit. Adding a target
+  (`n`) picks **what runs against it** — native checks / deep / specific Docker tools
+  (`monitor.DEEP_TOOLS` / `MONITOR_TOOLS`; `--deep` / `--tools` preload a profile); tool
+  findings merge into the live counters + combined report. Non-TTY → headless run + summary.
 - **Reports:** `-o report.{html,pdf,md,json}` — HTML is collapsible + Print-to-PDF, PDF via
   fpdf2 (no browser). README terminal screenshots live in `cli/docs/screenshots/`.
 - **Extend:** a Docker tool = a `Tool(...)` in `tools.TOOLS` (image · `argv` builder ·

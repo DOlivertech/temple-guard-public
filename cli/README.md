@@ -132,14 +132,24 @@ findings-severity meter, an activity sparkline, per-scan status, and a live log 
 | `↑` `↓` / `j` `k` | select a scan |
 | `s` | stop the selected scan |
 | `r` | restart the selected scan |
-| `n` | add one or more targets (any time, even while scans run) |
+| `n` | add target(s), then **pick what runs**: native · deep · specific tools |
 | `w` | write **one combined report** for all scans (`.html` / `.md` / `.json`) |
 | `q` / `Esc` | quit the dashboard |
 
-Launching **Monitor** from the menu opens the dashboard **empty** — add targets with `n`.
-Every row is a real scan in its own thread (no mock data). For a scripted run, `-o` writes the
-combined report on exit: `temple-guard monitor <urls…> -o report.html`. Without an interactive
-terminal (a pipe / CI) it runs headless and prints a summary.
+Launching **Monitor** from the menu opens the dashboard **empty** — add targets with `n`. When
+you add a target you choose **what runs against it**: **Native checks** (fast, no Docker),
+**Deep** (native + the Docker recon set — whatweb, wafw00f, testssl, nmap, nuclei), or **Pick
+tools…** (native + specific tools). Tool findings merge into the same live counters and the
+combined report. The chosen profile shows as a small gold tag next to the target.
+
+Every row is a real scan in its own thread (no mock data). For a scripted run, preload targets
+and a profile and let `-o` write the combined report on exit:
+```bash
+temple-guard monitor https://a.example.com https://b.example.com -o report.html   # native
+temple-guard monitor https://a.example.com --deep -o report.html                  # + Docker recon
+temple-guard monitor https://a.example.com --tools nmap,nuclei                     # specific tools
+```
+Without an interactive terminal (a pipe / CI) it runs headless and prints a summary.
 
 ## Deep scan — Docker tools (optional)
 

@@ -24,10 +24,13 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from . import tools as _tools
 from .checks import CHECK_PLAN, scan as run_scan
 from .report import BLUE, PURPLE
 
 TOTAL_STEPS = len(CHECK_PLAN)
+DEEP_TOOLS = list(_tools.DEFENSIVE)          # the `--deep` recon set: whatweb, wafw00f, testssl, nmap, nuclei
+MONITOR_TOOLS = DEEP_TOOLS + ["nikto"]       # selectable per target in the dashboard (nikto is opt-in — slow)
 
 GOLD = "#ffd60a"
 TIP = "#fff7cc"
@@ -47,8 +50,9 @@ class _Stopped(Exception):
 class Task:
     id: int
     url: str
+    tools: list = field(default_factory=list)   # extra Docker tools to run after the native checks
     status: str = "queued"          # queued | running | done | failed | stopped
-    step: int = 0                   # check groups started (0..TOTAL_STEPS)
+    step: int = 0                   # progress steps completed (0..total)
     current: str = "queued"
     findings: Counter = field(default_factory=Counter)
     started: float = 0.0
@@ -58,12 +62,18 @@ class Task:
     _stop: threading.Event = field(default_factory=threading.Event)
 
     @property
+    def total(self) -> int:
+        """Progress steps for this task: the native checks + one per selected Docker tool."""
+        return TOTAL_STEPS + len(self.tools)
+
+    @property
     def frac(self) -> float:
+        tot = self.total
         if self.status == "done":
             return 1.0
         if self.status in ("failed", "stopped"):
-            return self.step / TOTAL_STEPS if TOTAL_STEPS else 0.0
-        return min(self.step / TOTAL_STEPS, 0.99) if TOTAL_STEPS else 0.0
+            return self.step / tot if tot else 0.0
+        return min(self.step / tot, 0.99) if tot else 0.0
 
     @property
     def age(self) -> float:
@@ -90,11 +100,12 @@ class TaskManager:
     def log(self, level: str, msg: str) -> None:
         self.log_lines.append((time.strftime("%H:%M:%S"), level, msg))
 
-    def add(self, url: str) -> Task:
-        t = Task(id=next(self._ids), url=url)
+    def add(self, url: str, tools: list = None) -> Task:
+        t = Task(id=next(self._ids), url=url, tools=list(tools or []))
         with self._lock:
             self.tasks.append(t)
-        self.log("INF", f"queued  {url}")
+        lbl = _profile_label(t)
+        self.log("INF", f"queued  {url}" + (f"  ·  {lbl}" if lbl else ""))
         self._pool.submit(self._run, t)
         return t
 
@@ -105,7 +116,7 @@ class TaskManager:
 
     def restart(self, t: Task) -> Task:
         self.log("INF", f"restart {t.url}")
-        return self.add(t.url)
+        return self.add(t.url, t.tools)
 
     def _run(self, t: Task) -> None:
         t.status = "running"
@@ -134,7 +145,10 @@ class TaskManager:
                 t.status, t.error, t.current = "failed", (res.error or "unreachable"), "unreachable"
                 self.log("ERR", f"failed  {t.url} — {t.error[:50]}")
             else:
-                t.step, t.status, t.current = TOTAL_STEPS, "done", "done"
+                t.step = TOTAL_STEPS                       # native checks done
+                if t.tools:
+                    self._run_tools(t, res)                # then the selected Docker tools
+                t.step, t.status, t.current = t.total, "done", "done"
                 self.log("INF", f"done    {t.url} — {t.n_findings} findings")
         except _Stopped:
             t.status, t.current = "stopped", "stopped"
@@ -143,6 +157,31 @@ class TaskManager:
             t.status, t.error, t.current = "failed", str(exc), "error"
             self.log("ERR", f"error   {t.url} — {str(exc)[:50]}")
         t.ended = time.monotonic()
+
+    def _run_tools(self, t: Task, res) -> None:
+        """After the native checks, run each selected Docker tool and merge its findings
+        into both the live counter and the ScanResult (so the combined report includes them)."""
+        ok, why = _tools.docker_available()
+        if not ok:
+            self.log("WRN", f"docker unavailable — skipped {len(t.tools)} tool(s): {why}")
+            return
+        for key in t.tools:
+            if t._stop.is_set():
+                raise _Stopped()
+            t.current = key
+            self.log("INF", f"tool    {t.url} · {key} …")
+            try:
+                findings, _raw, _ok = _tools.run_tool(key, t.url)
+            except Exception as exc:  # noqa: BLE001 — one tool failing shouldn't sink the scan
+                self.log("ERR", f"{key} error — {str(exc)[:50]}")
+                t.step += 1
+                continue
+            for f in findings:
+                t.findings[f.severity] += 1
+                res.findings.append(f)
+                self.log(LEVEL_FOR_SEV.get(f.severity, "INF"),
+                         f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
+            t.step += 1
 
     def counts(self) -> Counter:
         return Counter(t.status for t in self.tasks)
@@ -169,6 +208,17 @@ class TaskManager:
 
 
 LEVEL_FOR_SEV = {"high": "ERR", "medium": "WRN", "low": "INF", "info": "INF"}
+
+
+def _profile_label(t: Task) -> str:
+    """A short tag for what runs against a target: '' (native only), 'deep', or the tool set."""
+    if not t.tools:
+        return ""
+    if list(t.tools) == DEEP_TOOLS:
+        return "deep"
+    if len(t.tools) <= 2:
+        return "+".join(t.tools)
+    return f"{len(t.tools)} tools"
 
 
 # ── rendering ────────────────────────────────────────────────────────────────
@@ -300,11 +350,15 @@ def _tasks_panel(mgr: TaskManager, sel: int, tick: int) -> Panel:
             (f"{t.findings.get('medium', 0)}M ", SEV_COLOR["medium"] if t.findings.get('medium') else "dim"),
             (f"{t.findings.get('low', 0)}L", SEV_COLOR["low"] if t.findings.get('low') else "dim"))
         row_style = "on #16202e" if i == sel else ""
-        tbl.add_row(marker, Text(target, style=("bold white" if i == sel else "white")),
+        tgt = Text(target, style=("bold white" if i == sel else "white"))
+        lbl = _profile_label(t)
+        if lbl:
+            tgt.append(f"  {lbl}", style=f"dim {GOLD}")
+        tbl.add_row(marker, tgt,
                     Text(t.status, style=col), prog, fnd, Text(_fmt_age(t.age), style="dim"),
                     style=row_style)
     if not mgr.tasks:
-        tbl.add_row("", Text("no scans yet — press  n  to add one or more targets", style="dim"),
+        tbl.add_row("", Text("no scans yet — press  n  to add targets and pick a scan", style="dim"),
                     "", "", "", "")
     return Panel(tbl, title="[1] scans", title_align="left", border_style=BLUE, padding=(0, 1))
 
@@ -447,12 +501,52 @@ def _norm(u: str) -> str:
     return ("http://" if local else "https://") + u
 
 
-def _prompt_targets(console: Console) -> list:
+def _prompt_targets(console: Console) -> tuple:
+    """Ask for one or more targets, then what should run against them.
+    Returns (urls, tools) — `tools` is the extra Docker tool set (empty = native checks only)."""
     import re
     from rich.prompt import Prompt
     raw = Prompt.ask("[cyan]Targets[/] [dim](space/comma separated — "
                      "e.g. https://a.com https://b.com; blank to cancel)[/]").strip()
-    return [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
+    urls = [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
+    if not urls:
+        return [], []
+    return urls, _prompt_profile(console, len(urls))
+
+
+def _prompt_profile(console: Console, n_targets: int) -> list:
+    """Pick what runs against the new target(s): native checks, the deep set, or chosen tools."""
+    import re
+
+    from rich.prompt import Prompt
+    scope = f"these {n_targets} targets" if n_targets > 1 else "this target"
+    console.print()
+    console.print(f"  [bold]What should run against {scope}?[/]")
+    console.print("    [bold]1[/] Native checks   [dim]— headers · TLS · cookies · exposure · "
+                  "SPF/DMARC   (fast, no Docker)[/]")
+    console.print(f"    [bold]2[/] Deep            [dim]— native + Docker recon: "
+                  f"{', '.join(DEEP_TOOLS)}[/]")
+    console.print("    [bold]3[/] Pick tools…     [dim]— native + specific Docker tools[/]")
+    choice = Prompt.ask("  choose", choices=["1", "2", "3"], default="1")
+    if choice == "1":
+        return []
+    if choice == "2":
+        return list(DEEP_TOOLS)
+    console.print()
+    for i, key in enumerate(MONITOR_TOOLS, 1):
+        console.print(f"    [bold]{i:>2}[/] {key:8} [dim]— {_tools.TOOLS[key].desc}[/]")
+    raw = Prompt.ask("  tools [dim](numbers or names, comma/space separated; blank = native only)[/]",
+                     default="").strip()
+    picked: list = []
+    for tok in re.split(r"[\s,]+", raw.lower()):
+        tok = tok.strip()
+        if not tok:
+            continue
+        key = MONITOR_TOOLS[int(tok) - 1] if (tok.isdigit() and 1 <= int(tok) <= len(MONITOR_TOOLS)) \
+            else (tok if tok in MONITOR_TOOLS else None)
+        if key and key not in picked:
+            picked.append(key)
+    return picked
 
 
 def _prompt_report_path(console: Console) -> str:
@@ -486,9 +580,10 @@ def write_report(mgr: TaskManager, path: str):
     return len(results), p
 
 
-def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str = None) -> None:
+def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str = None,
+               tools: list = None) -> None:
     for u in urls:
-        mgr.add(u)
+        mgr.add(u, tools)
     state = {"sel": 0, "quit": False, "add": False, "report": False}
     keys = _Keys(state, mgr)
     keys.start()
@@ -501,8 +596,9 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str 
                     state["add"] = False
                     keys.pause()                    # step the key-reader aside so typing echoes
                     live.stop()
-                    for u in _prompt_targets(console):
-                        mgr.add(u)
+                    urls, picked = _prompt_targets(console)
+                    for u in urls:
+                        mgr.add(u, picked)
                     live.start(refresh=True)
                     keys.resume()
                 if state["report"]:                 # 'w' — write ONE combined report for all scans
@@ -549,10 +645,11 @@ def _summary(mgr: TaskManager, console: Console) -> None:
          f"({tot.get('high', 0)}H {tot.get('medium', 0)}M {tot.get('low', 0)}L)", "dim")))
 
 
-def _headless(mgr: TaskManager, urls: list, console: Console, report_path: str = None) -> None:
+def _headless(mgr: TaskManager, urls: list, console: Console, report_path: str = None,
+              tools: list = None) -> None:
     """No-TTY fallback (pipes / CI): run the scans, print progress, then summarize."""
     for u in urls:
-        mgr.add(u)
+        mgr.add(u, tools)
     while not mgr.all_settled():
         c = mgr.counts()
         console.print(f"[dim]running {c.get('running', 0)} · done {c.get('done', 0)} · "
@@ -565,16 +662,18 @@ def _headless(mgr: TaskManager, urls: list, console: Console, report_path: str =
     _summary(mgr, console)
 
 
-def run(urls: list, workers: int = 4, report_path: str = None) -> None:
+def run(urls: list, workers: int = 4, report_path: str = None, tools: list = None) -> None:
     """Launch the live monitor. Open the dashboard (add targets with 'n'), or preload `urls`.
-    `report_path`, if given, writes ONE combined report across all scans when the run ends."""
+    `tools` is the extra Docker tool set applied to preloaded `urls` (empty = native checks only;
+    inside the dashboard each target picks its own). `report_path`, if given, writes ONE combined
+    report across all scans when the run ends."""
     console = Console()
     mgr = TaskManager(workers=workers)
     urls = [u for u in (urls or []) if u]
     if sys.stdin.isatty() and console.is_terminal:
-        _dashboard(mgr, urls, console, report_path)
+        _dashboard(mgr, urls, console, report_path, tools)
     else:
         if not urls:
             console.print("[dim]No targets and no interactive terminal — nothing to monitor.[/]")
             return
-        _headless(mgr, urls, console, report_path)
+        _headless(mgr, urls, console, report_path, tools)

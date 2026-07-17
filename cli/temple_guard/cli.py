@@ -812,15 +812,31 @@ def monitor(
     workers: int = typer.Option(4, "--workers", "-w", help="Max scans running at once."),
     report: str = typer.Option(None, "--report", "-o",
                                help="Write ONE combined report (.html/.md/.json) for all scans when the run ends."),
+    deep: bool = typer.Option(False, "--deep",
+                              help="Also run the Docker recon set on preloaded targets (whatweb, wafw00f, testssl, nmap, nuclei)."),
+    tools: str = typer.Option(None, "--tools",
+                              help="Comma-separated Docker tools to also run on preloaded targets (e.g. nmap,nuclei)."),
 ):
     """Live dashboard — run several scans at once; add / stop / restart from inside it.
 
+    Each target picks what runs against it (native checks, deep, or specific tools) — from
+    the 'n' prompt in the dashboard, or via --deep / --tools for preloaded targets.
+
     temple-guard monitor                                       # open empty, add targets with 'n'
     temple-guard monitor https://a.example.com https://b.example.com -o report.html
+    temple-guard monitor https://a.example.com --deep          # preload with the deep recon set
     """
     from . import monitor as _mon
     targets = [_norm_target(u, "url") for u in (urls or []) if u and u.strip()]
-    _mon.run(targets, workers=workers, report_path=report)
+    tool_set = list(_mon.DEEP_TOOLS) if deep else []
+    for tok in (tools.replace(",", " ").split() if tools else []):
+        tok = tok.strip().lower()
+        if tok in _mon.MONITOR_TOOLS and tok not in tool_set:
+            tool_set.append(tok)
+        elif tok:
+            console.print(f"[yellow]unknown tool '{tok}' — skipping "
+                          f"(known: {', '.join(_mon.MONITOR_TOOLS)})[/]")
+    _mon.run(targets, workers=workers, report_path=report, tools=tool_set)
 
 
 def _monitor_flow() -> None:
