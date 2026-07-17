@@ -221,6 +221,7 @@ def _run_tools(url: str, names: list, verbose: bool, quiet: bool = False) -> lis
         if not quiet:
             console.print(Text.assemble(("⚠ Docker unavailable — skipping Kali tools: ",
                                          "bold #fbbf24"), (why, "dim")))
+            console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
         return []
     if quiet:
         out = []
@@ -326,6 +327,7 @@ def shell(image: str = typer.Option(None, "--image", help="Container image (defa
     ok, why = tools.docker_available()
     if not ok:
         console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
         raise typer.Exit(code=1)
     console.print(Text.assemble(("Starting a Kali shell in ", "dim"),
                                 (image or tools.KALI_SHELL_IMAGE, f"bold {BLUE}"),
@@ -413,6 +415,7 @@ def tool(ctx: typer.Context,
     ok, why = tools.docker_available()
     if not ok:
         console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
         raise typer.Exit(1)
     _authz_notice()
     console.print(Text.assemble((f"⚙ {name} ", f"bold {PURPLE}"), (" ".join(args), "dim"),
@@ -625,6 +628,7 @@ def _shell_flow(dry: bool = False) -> None:
     ok, why = tools.docker_available()
     if not ok:
         console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
         return
     console.print(Text.assemble(("Starting a Kali shell (", "dim"),
                                 (tools.KALI_SHELL_IMAGE, f"bold {BLUE}"),
@@ -778,6 +782,7 @@ def _tool_flow(dry: bool = False) -> None:
         ok, why = tools.docker_available()
         if not ok:
             console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+            console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
             return
     picker = [(k, t.name, t.desc) for k, t in tools.TOOLS.items()]
     picker.append(("__back__", "← Back to menu", ""))
@@ -848,6 +853,68 @@ def _monitor_flow() -> None:
     _mon.run([], workers=4)
 
 
+def _doctor(pull: bool = False) -> None:
+    """Check Docker readiness + tool-image status; optionally pull the missing images."""
+    from rich.prompt import Confirm
+    console.print(Text.assemble(("\nTemple Guard — preflight for the Docker tools\n", f"bold {PURPLE}")))
+    ok, why = tools.docker_available()
+    console.print(Text.assemble(("  native checks   ", "white"),
+                                ("✓ always available (no Docker needed)", "#4ade80")))
+    console.print(Text.assemble(("  docker          ", "white"),
+                                (("✓ ready" if ok else f"✗ {why}"), f"bold {'#4ade80' if ok else '#f87171'}")))
+    if not ok:
+        console.print(Text.assemble(("\n  → ", f"bold {BLUE}"), (tools.docker_hint(), "white")))
+        console.print(Text("\n  Native scans still work:  temple-guard scan <url>", style="dim"))
+        raise typer.Exit(code=1)
+
+    console.print(Text("\n  tool images:", style="white"))
+    imgs = tools.defensive_images()
+    missing = []
+    for img in imgs:
+        present = tools.image_present(img)
+        if not present:
+            missing.append(img)
+        console.print(Text.assemble(
+            ("    " + ("✓ " if present else "○ "), f"{'#4ade80' if present else '#fbbf24'}"),
+            (f"{img:<34}", "white"), (("present" if present else "not pulled yet"), "dim")))
+
+    if missing and not pull and console.is_terminal:
+        pull = Confirm.ask(f"\n  Pull {len(missing)} missing image(s) now?", default=True)
+    if pull and missing:
+        console.print(Text(f"\n  pulling {len(missing)} image(s) — this can take a few minutes…", style="dim"))
+        failed = 0
+        for img in missing:
+            with console.status(Text(f"docker pull {img}", style="dim"), spinner="dots"):
+                okp, msg = tools.pull_image(img)
+            if okp:
+                console.print(Text.assemble(("    ✓ ", "#4ade80"), (img, "white"), ("  pulled", "dim")))
+            else:
+                failed += 1
+                console.print(Text.assemble(("    ✗ ", "#f87171"), (img, "white"), (f"  {msg}", "dim")))
+        if failed:
+            console.print(Text.assemble((f"\n  {failed} image(s) failed to pull. ", "bold #f87171"),
+                                        (tools.docker_hint(), "dim")))
+            raise typer.Exit(code=1)
+        console.print(Text("\n  ✓ all set — deep scans will run immediately.", style="bold #4ade80"))
+    elif missing:
+        console.print(Text.assemble((f"\n  {len(missing)} image(s) pull on first use. ", "dim"),
+                                    ("Pre-pull now:  ", "dim"),
+                                    ("temple-guard doctor --pull", f"bold {BLUE}")))
+    else:
+        console.print(Text("\n  ✓ all tool images present — deep scans will run immediately.",
+                           style="bold #4ade80"))
+
+
+@app.command()
+def doctor(pull: bool = typer.Option(False, "--pull", help="Pull any missing Docker tool images now.")):
+    """Preflight the Docker tools: verify Docker is running and fetch the tool images.
+
+    temple-guard doctor            # check Docker + which tool images are present
+    temple-guard doctor --pull     # + download any missing images up front
+    """
+    _doctor(pull=pull)
+
+
 @app.command()
 def interactive() -> None:
     """Interactive, colourful menu — fuzzy-pick what to run. Esc = back · Ctrl+C = quit."""
@@ -868,6 +935,7 @@ def interactive() -> None:
                 ("m", "Monitor", "live dashboard — run several scans at once"),
                 ("3", "Run a tool", "one Kali tool with your own arguments"),
                 ("4", "Kali shell", "interactive shell in a Kali container"),
+                ("p", "Doctor", "check Docker & pre-pull the tool images"),
                 ("5", "What it checks", "list the checks temple-guard runs"),
                 ("6", "Help", "commands & flags"),
                 ("7", "Update", "pull the newest temple-guard from its repo"),
@@ -893,6 +961,8 @@ def interactive() -> None:
                 _tool_flow(dry=dry)
             elif choice == "4":
                 _shell_flow(dry=dry)
+            elif choice == "p":
+                _doctor()
             elif choice == "5":
                 _print_checks()
             elif choice == "6":

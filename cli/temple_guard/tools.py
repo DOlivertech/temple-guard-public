@@ -33,6 +33,82 @@ def docker_available() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def docker_hint() -> str:
+    """A short, actionable 'what to do next' line for the current Docker state."""
+    import platform
+    if not shutil.which("docker"):
+        return ("Install Docker Desktop (https://docs.docker.com/get-docker/) — each deep-scan "
+                "tool runs in its own container. The native checks need no Docker.")
+    sysname = platform.system()
+    if sysname == "Darwin":
+        return "Start Docker Desktop (`open -a Docker`), wait until it reports 'running', then retry."
+    if sysname == "Windows":
+        return "Start Docker Desktop, wait until it reports 'running', then retry."
+    return "Start the Docker daemon (`sudo systemctl start docker`), then retry."
+
+
+def image_present(image: str) -> bool:
+    """True if the image is already pulled locally (no network)."""
+    try:
+        p = subprocess.run(["docker", "image", "inspect", image],
+                           capture_output=True, text=True, timeout=15)
+        return p.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def pull_image(image: str, timeout: int = 900) -> tuple[bool, str]:
+    """Pull one image. Returns (ok, message) — message is the last error line on failure."""
+    try:
+        p = subprocess.run(["docker", "pull", image], capture_output=True, text=True, timeout=timeout)
+        if p.returncode == 0:
+            return True, ""
+        tail = (p.stderr or p.stdout).strip().splitlines()
+        return False, (tail[-1][:200] if tail else f"exit {p.returncode}")
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout}s"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+def defensive_images() -> list[str]:
+    """Every image the defensive / monitor tools need, deduped — for preflight (`doctor`).
+    Includes `alpine`, used once to resolve the host gateway IP for localhost targets."""
+    imgs: list[str] = []
+    for key in DEFENSIVE + ["nikto"]:
+        img = TOOLS[key].image
+        if img not in imgs:
+            imgs.append(img)
+    if "alpine" not in imgs:
+        imgs.append("alpine")
+    return imgs
+
+
+def _diagnose(err: str, rc: int) -> tuple[str, str]:
+    """Classify a failed tool run into (short reason, what-to-do) for a clear finding."""
+    e = (err or "").lower()
+    if rc == 124 or "timed out" in e:
+        return ("timed out",
+                "The tool exceeded its time limit. Retry, narrow the scope (fewer ports / lighter "
+                "options), or raise the timeout.")
+    if any(s in e for s in ("cannot connect to the docker daemon", "is the docker daemon running",
+                            "permission denied while trying to connect to the docker")):
+        return ("Docker not running", f"{docker_hint()}")
+    if any(s in e for s in ("no such host", "temporary failure in name resolution", "could not resolve",
+                            "network is unreachable", "i/o timeout", "client.timeout", "dial tcp",
+                            "tls handshake timeout")):
+        return ("network / pull failed",
+                "Check your internet connection — the first run of a tool downloads its image. "
+                "Pre-pull with `temple-guard doctor --pull`, then retry.")
+    if any(s in e for s in ("pull access denied", "manifest unknown", "not found",
+                            "repository does not exist", "unable to find image", "no such image")):
+        return ("image unavailable",
+                "Pre-pull the tool images with `temple-guard doctor --pull` "
+                "(verifies Docker and fetches every image), then retry.")
+    return ("did not complete",
+            "Run `temple-guard doctor` to check Docker and the tool images, then retry.")
+
+
 def _host(url: str) -> str:
     return urlparse(url if "://" in url else "https://" + url).hostname or url
 
@@ -384,9 +460,9 @@ def run_tool(key: str, url: str, timeout: Optional[int] = None) -> tuple[list[Fi
                         timeout or tool.default_timeout, tool.extra)
     raw = out if out.strip() else err
     if rc != 0 and not out.strip():
-        return ([Finding(f"{tool.name} did not complete", "info", tool.cat,
-                         (err or f"exit {rc}")[:200],
-                         "Check Docker is running and the image pulled, then retry.")], raw, False)
+        reason, fix = _diagnose(err, rc)
+        return ([Finding(f"{tool.name} — {reason}", "info", tool.cat,
+                         (err or f"exit {rc}")[:200], fix)], raw, False)
     return tool.parse(out, url), raw, True
 
 

@@ -163,7 +163,8 @@ class TaskManager:
         into both the live counter and the ScanResult (so the combined report includes them)."""
         ok, why = _tools.docker_available()
         if not ok:
-            self.log("WRN", f"docker unavailable — skipped {len(t.tools)} tool(s): {why}")
+            self.log("ERR", f"docker unavailable — {len(t.tools)} tool(s) skipped: {why}")
+            self.log("WRN", _tools.docker_hint())
             return
         for key in t.tools:
             if t._stop.is_set():

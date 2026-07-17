@@ -10,6 +10,10 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
 - **Monitor: manage targets from inside the dashboard.** Launching **Monitor** from the menu
   now opens the dashboard directly (empty) — press **`n`** to add one or more targets at any
   time (even while other scans run), instead of a prompt up front.
+- **Actionable Docker errors.** Every "Docker unavailable" path now prints **what to do** (install
+  Docker Desktop, or start it — per-OS guidance), and a failed tool run is **classified** —
+  daemon-down · network/pull-failed · image-unavailable · timed-out — each with a targeted fix in
+  the finding instead of a generic "did not complete".
 ### Added
 - **Combined monitor report.** Press **`w`** in the dashboard (or `temple-guard monitor
   <urls…> -o report.html`) to write **one** report across every scan — a summary table +
@@ -20,6 +24,10 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
   the live counters and the combined report, and each row's **SCAN** column shows the chosen
   profile. For scripted runs, `temple-guard monitor <urls…> --deep` / `--tools nmap,nuclei`
   preload a profile onto the given targets.
+- **`doctor` preflight.** `temple-guard doctor` verifies Docker is running and lists which tool
+  images are present; `temple-guard doctor --pull` fetches the missing ones up front so the first
+  deep scan runs immediately (also on the interactive menu). Nothing to build or vendor — the
+  images are public and pulled on demand.
 ### Fixed
 - **Add-target prompt is now visible.** Pressing **`n`** (or **`w`**) opened a line prompt
   while the dashboard's single-key reader was still holding the terminal in no-echo `cbreak`

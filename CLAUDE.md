@@ -72,7 +72,12 @@ report. Everything lives in `cli/`; it ships to end users via `pipx`.
   `whatweb, wafw00f, testssl, nmap, nuclei` (the `--deep` set) + `nikto` (opt-in). Entry
   points `run_tool` (parsed→findings), `run_raw` (full-flag passthrough), `kali_shell`. A
   `localhost` / `host.docker.internal` target resolves to the host's **numeric IPv4** (works
-  around Docker-Desktop's dead IPv6 dual-stack); dry-run previews skip resolution.
+  around Docker-Desktop's dead IPv6 dual-stack); dry-run previews skip resolution. **Prereq =
+  Docker running** (nothing to vendor — images are public, pulled on demand incl. `alpine` for
+  the localhost remap). `temple-guard doctor [--pull]` verifies Docker + pre-pulls
+  (`tools.defensive_images()`); every "Docker unavailable" path prints `tools.docker_hint()`
+  (per-OS install/start guidance) and failed tool runs are classified via `tools._diagnose`
+  (daemon-down · network/pull · image-unavailable · timeout).
 - **UX:** bare `temple-guard` → a fuzzy, type-to-filter menu (InquirerPy; `TG_NO_FUZZY=1` for
   the numbered fallback). "Run a tool" is **guided** — options become numbered prompts /
   yes-no, the target is validated + normalized, and a "Run this?" confirm precedes execution.

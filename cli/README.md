@@ -153,6 +153,15 @@ Without an interactive terminal (a pipe / CI) it runs headless and prints a summ
 
 ## Deep scan — Docker tools (optional)
 
+> **Prerequisites.** The deep-scan tools each run in **Docker** — install
+> **[Docker Desktop](https://docs.docker.com/get-docker/)** (macOS / Windows) or the Docker
+> Engine (Linux) and make sure it's running. Then run **`temple-guard doctor`** to check
+> readiness, or **`temple-guard doctor --pull`** to fetch every tool image up front (otherwise
+> the first run of each tool pulls its image on demand — a one-time download of a few hundred MB
+> total, cached afterwards). **No Docker? The native checks still run** — the tools are skipped
+> with a clear note telling you what to do. There's nothing else to install: the images are
+> public and pulled automatically; no Kali image to build.
+
 With **Docker** running, add real tool containers to any scan; their findings merge into
 the same unified report:
 ```bash
