@@ -84,7 +84,8 @@ report. Everything lives in `cli/`; it ships to end users via `pipx`.
   **Every** action has a `--dry-run`; `temple-guard update` self-updates from the git repo.
 - **Monitor:** `temple-guard monitor <urls…>` (or the "Monitor" menu item) runs several scans
   concurrently in a live btop-style dashboard — animated progress, findings meter, live logs;
-  `↑↓` select, `s`/`r`/`n` stop/restart/new, `w` combined report, `q` quit. Adding a target
+  `↑↓`/`jk` select, `s`/`r`/`n` stop/restart/new, `w` combined report, `Esc`/`Ctrl+C` leave
+  (confirmation gate; `q` is inert). Arrow parsing handles ESC[A **and** ESC O A. Adding a target
   (`n`) picks **what runs against it** — native checks / deep / specific Docker tools
   (`monitor.DEEP_TOOLS` / `MONITOR_TOOLS`; `--deep` / `--tools` preload a profile); tool
   findings merge into the live counters + combined report. Non-TTY → headless run + summary.

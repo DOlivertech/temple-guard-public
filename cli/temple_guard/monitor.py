@@ -386,7 +386,7 @@ def _logs_panel(mgr: TaskManager, height: int) -> Panel:
 
 def _footer() -> Text:
     parts = [("↑↓/jk", "select"), ("s", "stop"), ("r", "restart"), ("n", "add"),
-             ("w", "report"), ("q", "quit")]
+             ("w", "report"), ("esc", "quit")]
     t = Text("  ")
     for key, desc in parts:
         t.append(f" {key} ", style=f"bold {BLUE} reverse")
@@ -471,24 +471,32 @@ class _Keys(threading.Thread):
     def _handle(self, ch: str, select, termios) -> None:  # noqa: ANN001
         s, m = self.state, self.mgr
         n = len(m.tasks)
-        if ch == "\x1b":  # ESC or an arrow-key sequence
+        if ch == "\x1b":  # a bare ESC, or the introducer of an arrow key (ESC[A or ESC O A)
             seq = ""
-            if select.select([sys.stdin], [], [], 0.02)[0]:
-                seq += sys.stdin.read(1)
-                if select.select([sys.stdin], [], [], 0.02)[0]:
-                    seq += sys.stdin.read(1)
-            if seq == "[A":
-                ch = "k"
-            elif seq == "[B":
-                ch = "j"
-            else:
-                s["quit"] = True
+            while len(seq) < 6:
+                # wait a touch longer for the FIRST follow-byte, then only briefly for the rest;
+                # a real arrow arrives as one burst, a lone Esc yields nothing.
+                if not select.select([sys.stdin], [], [], 0.12 if not seq else 0.03)[0]:
+                    break
+                c = sys.stdin.read(1)
+                seq += c
+                if (c.isalpha() or c == "~") and len(seq) >= 2:  # final byte of a CSI/SS3 seq
+                    break
+            if not seq:                       # nothing followed → a real Esc → request quit (gated)
+                s["confirm_quit"] = True
                 return
-        if ch in ("q", "\x03"):            # q or Ctrl-C
-            s["quit"] = True
-        elif ch in ("j",) and n:
+            final = seq[-1]
+            if final == "A":                  # ↑ — works for both ESC[A and ESC O A (app-cursor mode)
+                ch = "k"
+            elif final == "B":                # ↓
+                ch = "j"
+            else:                             # ←/→, Home/End, F-keys, … — ignore, do NOT quit
+                return
+        if ch == "\x03":                      # Ctrl-C as a byte → request quit (gated)
+            s["confirm_quit"] = True
+        elif ch == "j" and n:
             s["sel"] = min(s["sel"] + 1, n - 1)
-        elif ch in ("k",) and n:
+        elif ch == "k" and n:
             s["sel"] = max(s["sel"] - 1, 0)
         elif ch == "s" and n:
             m.stop(m.tasks[s["sel"]])
@@ -498,6 +506,8 @@ class _Keys(threading.Thread):
             s["add"] = True
         elif ch == "w":
             s["report"] = True
+        elif ch == "q":                       # q no longer quits — guide the user to Esc / Ctrl-C
+            m.log("INF", "press Esc or Ctrl-C to leave the monitor")
 
 
 # ── entry points ─────────────────────────────────────────────────────────────
@@ -589,11 +599,28 @@ def write_report(mgr: TaskManager, path: str):
     return len(results), p
 
 
+def _confirm_quit(mgr: TaskManager, console: Console) -> bool:
+    """Ask before leaving the monitor. Returns True to quit, False to stay.
+    Warns (and defaults to 'stay') when scans are still running."""
+    from rich.prompt import Confirm
+    c = mgr.counts()
+    active = c.get("running", 0) + c.get("queued", 0)
+    console.print()
+    if active:
+        console.print(Text.assemble(
+            ("⚠ ", "bold #fbbf24"),
+            (f"{active} scan(s) still running — leaving the monitor will stop them.", "#fbbf24")))
+    try:
+        return Confirm.ask("[bold]Quit the monitor?[/]", default=not active)
+    except (KeyboardInterrupt, EOFError):
+        return True   # a second Ctrl-C at the prompt → force quit
+
+
 def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str = None,
                tools: list = None) -> None:
     for u in urls:
         mgr.add(u, tools)
-    state = {"sel": 0, "quit": False, "add": False, "report": False}
+    state = {"sel": 0, "quit": False, "add": False, "report": False, "confirm_quit": False}
     keys = _Keys(state, mgr)
     keys.start()
     tick = 0
@@ -601,34 +628,47 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str 
     try:
         with Live(console=console, screen=True, refresh_per_second=10, transient=True) as live:
             while not state["quit"]:
-                if state["add"]:                    # 'n' — add one or more targets, mid-run
-                    state["add"] = False
-                    keys.pause()                    # step the key-reader aside so typing echoes
-                    live.stop()
-                    urls, picked = _prompt_targets(console)
-                    for u in urls:
-                        mgr.add(u, picked)
-                    live.start(refresh=True)
-                    keys.resume()
-                if state["report"]:                 # 'w' — write ONE combined report for all scans
-                    state["report"] = False
-                    keys.pause()
-                    live.stop()
-                    dest = _prompt_report_path(console)
-                    if dest:
-                        n, p = write_report(mgr, dest)
-                        if n:
-                            mgr.log("INF", f"wrote combined report ({n} scans) → {p}")
-                            console.print(f"[green]✓ combined report ({n} scans) → {p}[/]")
-                        else:
-                            console.print("[dim]No completed scans to report yet.[/]")
-                        time.sleep(1.4)
-                    live.start(refresh=True)
-                    keys.resume()
-                state["sel"] = min(state["sel"], max(len(mgr.tasks) - 1, 0))
-                live.update(_render(mgr, state["sel"], tick, body_h))
-                time.sleep(0.1)
-                tick += 1
+                try:
+                    if state["confirm_quit"]:       # Esc / Ctrl-C → gated leave (are-you-sure)
+                        state["confirm_quit"] = False
+                        keys.pause()
+                        live.stop()
+                        if _confirm_quit(mgr, console):
+                            state["quit"] = True
+                            break
+                        live.start(refresh=True)    # stayed — resume the dashboard
+                        keys.resume()
+                        continue
+                    if state["add"]:                # 'n' — add one or more targets, mid-run
+                        state["add"] = False
+                        keys.pause()                # step the key-reader aside so typing echoes
+                        live.stop()
+                        new_urls, picked = _prompt_targets(console)
+                        for u in new_urls:
+                            mgr.add(u, picked)
+                        live.start(refresh=True)
+                        keys.resume()
+                    if state["report"]:             # 'w' — write ONE combined report for all scans
+                        state["report"] = False
+                        keys.pause()
+                        live.stop()
+                        dest = _prompt_report_path(console)
+                        if dest:
+                            n, p = write_report(mgr, dest)
+                            if n:
+                                mgr.log("INF", f"wrote combined report ({n} scans) → {p}")
+                                console.print(f"[green]✓ combined report ({n} scans) → {p}[/]")
+                            else:
+                                console.print("[dim]No completed scans to report yet.[/]")
+                            time.sleep(1.4)
+                        live.start(refresh=True)
+                        keys.resume()
+                    state["sel"] = min(state["sel"], max(len(mgr.tasks) - 1, 0))
+                    live.update(_render(mgr, state["sel"], tick, body_h))
+                    time.sleep(0.1)
+                    tick += 1
+                except KeyboardInterrupt:            # Ctrl-C anywhere in the loop → route to the gate
+                    state["confirm_quit"] = True
     except KeyboardInterrupt:
         pass
     finally:

@@ -134,7 +134,7 @@ findings-severity meter, an activity sparkline, per-scan status, and a live log 
 | `r` | restart the selected scan |
 | `n` | add target(s), then **pick what runs**: native · deep · specific tools |
 | `w` | write **one combined report** for all scans (`.html` / `.md` / `.json`) |
-| `q` / `Esc` | quit the dashboard |
+| `Esc` / `Ctrl+C` | leave the dashboard — **asks to confirm** (and warns if scans are still running) |
 
 Launching **Monitor** from the menu opens the dashboard **empty** — add targets with `n`. When
 you add a target you choose **what runs against it**: **Native checks** (fast, no Docker),

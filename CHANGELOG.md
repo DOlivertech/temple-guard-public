@@ -29,6 +29,14 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
   deep scan runs immediately (also on the interactive menu). Nothing to build or vendor — the
   images are public and pulled on demand.
 ### Fixed
+- **Arrow keys no longer quit the monitor.** In application-cursor-key terminals the up/down
+  arrows arrive as `ESC O A` / `ESC O B` (not `ESC [ A`); the dashboard only matched the latter,
+  so an arrow fell through to "quit". It now recognizes both forms (and ignores other escape
+  sequences instead of quitting).
+- **Leaving the monitor is now gated.** Quitting asks **"Quit the monitor?"** first — and warns
+  when scans are still running (defaulting to *stay*). The only quit keys are **`Esc`** and
+  **`Ctrl+C`**; **`q`** no longer exits (it hints to use Esc). A second `Ctrl+C` at the prompt
+  force-quits.
 - **Add-target prompt is now visible.** Pressing **`n`** (or **`w`**) opened a line prompt
   while the dashboard's single-key reader was still holding the terminal in no-echo `cbreak`
   mode *and* consuming stdin — so the target you typed was invisible and stray keystrokes

@@ -848,7 +848,8 @@ def _monitor_flow() -> None:
     _authz_notice()
     console.print(Text.assemble(
         ("Opening the monitor — press ", "dim"), ("n", f"bold {BLUE}"), (" to add targets, ", "dim"),
-        ("w", f"bold {BLUE}"), (" for a combined report, ", "dim"), ("q", f"bold {BLUE}"), (" to exit.", "dim")))
+        ("w", f"bold {BLUE}"), (" for a combined report, ", "dim"),
+        ("Esc", f"bold {BLUE}"), (" to leave (confirms if scans are running).", "dim")))
     from . import monitor as _mon
     _mon.run([], workers=4)
 
