@@ -29,12 +29,8 @@ from . import tools as _tools
 from .checks import CHECK_PLAN, scan as run_scan
 from .report import BLUE, PURPLE
 
-# Optional extension: extra scan profiles + their runners, contributed by the build.
-# Absent in the stock build — the dashboard then offers only the defensive profiles.
-try:
-    from . import monitor_ext as _ext
-except Exception:  # noqa: BLE001 — no extension installed → defensive-only
-    _ext = None
+# Extension point for build-specific scan profiles. None in this build → defensive profiles only.
+_ext = None
 
 TOTAL_STEPS = len(CHECK_PLAN)
 DEEP_TOOLS = list(_tools.DEFENSIVE)          # the `--deep` recon set: whatweb, wafw00f, testssl, nmap, nuclei
