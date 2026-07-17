@@ -14,6 +14,12 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
   Docker Desktop, or start it — per-OS guidance), and a failed tool run is **classified** —
   daemon-down · network/pull-failed · image-unavailable · timed-out — each with a targeted fix in
   the finding instead of a generic "did not complete".
+- **New banner emblem.** The Temple Guard shield now carries a single **gold lightsaber** — a
+  thick blade down the front of the guard mask, glowing tip up top, steel hilt below (replacing
+  the old double-bladed saberstaff).
+### Docs
+- README now shows the **live monitor** in action, and the interactive Help lists `monitor` +
+  `doctor`.
 ### Added
 - **Combined monitor report.** Press **`w`** in the dashboard (or `temple-guard monitor
   <urls…> -o report.html`) to write **one** report across every scan — a summary table +
@@ -197,4 +203,4 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
 - Initial `temple-guard` CLI — bounded, read-only self-scan (security headers, TLS /
   certificate, cookie flags, info disclosure, exposed sensitive paths, risky HTTP methods)
   with a colourful terminal report, `--dry-run`, markdown output, and CI-friendly exit codes.
-- Sanitized public snapshot of the authorized penetration-testing orchestration platform.
+- Public release of the authorized penetration-testing orchestration platform.
