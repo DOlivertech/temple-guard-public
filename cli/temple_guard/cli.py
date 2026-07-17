@@ -558,6 +558,10 @@ _COMMANDS = [
     ("temple-guard scan <url> --tools nmap,nikto", "run specific Docker tools"),
     ("temple-guard scan <url> --dry-run", "list the checks, send nothing"),
     ("temple-guard scan <url> -o report.html", "save a report (.html / .pdf / .md / .json)"),
+    ("temple-guard monitor", "live dashboard — run several scans at once ('n' add · Esc leave)"),
+    ("temple-guard monitor <urls…> --deep", "preload targets + the Docker recon set"),
+    ("temple-guard monitor <urls…> --tools nmap", "preload specific Docker tools"),
+    ("temple-guard monitor <urls…> -o report.html", "one combined report across all scans"),
     ("temple-guard tool", "list the Docker tools"),
     ("temple-guard tool <name>", "full explainer for a tool (what · how · risks · flags)"),
     ("temple-guard tool nmap <args>", "run a Kali tool with your own flags (full arg set)"),
@@ -565,6 +569,8 @@ _COMMANDS = [
     ("temple-guard tool nmap -h", "the tool's own help / full options"),
     ("temple-guard shell", "interactive Kali shell in a container"),
     ("temple-guard shell --dry-run", "preview the shell container command; start nothing"),
+    ("temple-guard doctor", "check Docker + which tool images are present"),
+    ("temple-guard doctor --pull", "pre-pull the Docker tool images for deep scans"),
     ("temple-guard update", "update to the newest version from the repo"),
     ("temple-guard update --check", "check for a newer version, install nothing"),
     ("temple-guard version", "print the version"),
@@ -581,7 +587,7 @@ def _print_checks() -> None:
 def _print_commands() -> None:
     console.print(Text("\nCommands:", style=f"bold {PURPLE}"))
     for cmd, desc in _COMMANDS:
-        console.print(Text.assemble(("  ", ""), (cmd.ljust(42), f"{BLUE}"), (desc, "dim")))
+        console.print(Text.assemble(("  ", ""), (cmd.ljust(50), f"{BLUE}"), (desc, "dim")))
 
 
 def _scan_flow(deep: bool = False, dry: bool = False) -> None:
