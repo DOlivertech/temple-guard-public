@@ -329,19 +329,31 @@ def _status_panel(mgr: TaskManager) -> Panel:
     return Panel(grid, title="status", title_align="left", border_style="#334155", padding=(1, 1))
 
 
+def _scan_cell(t: Task) -> Text:
+    """The SCAN column — what runs against this target: native / deep / the tool set."""
+    if not t.tools:
+        return Text("native", style="dim")
+    if list(t.tools) == DEEP_TOOLS:
+        return Text("deep", style=f"bold {GOLD}")
+    if len(t.tools) == 1:
+        return Text(t.tools[0][:8], style=GOLD)
+    return Text(f"{t.tools[0][:4]}+{len(t.tools) - 1}", style=GOLD)
+
+
 def _tasks_panel(mgr: TaskManager, sel: int, tick: int) -> Panel:
     tbl = Table(expand=True, box=None, pad_edge=False)
     tbl.add_column(" ", width=1)
     tbl.add_column("TARGET", style="white", no_wrap=True, ratio=3)
+    tbl.add_column("SCAN", width=8, no_wrap=True)
     tbl.add_column("STATUS", width=8)
-    tbl.add_column("PROGRESS", width=26)
+    tbl.add_column("PROGRESS", width=20)
     tbl.add_column("FINDINGS", width=12)
     tbl.add_column("AGE", width=6, justify="right")
     for i, t in enumerate(mgr.tasks):
         col = STATUS_COLOR[t.status]
         marker = Text("▸", style=f"bold {BLUE}") if i == sel else Text(" ")
         target = t.url.replace("https://", "").replace("http://", "")
-        bar = _bar(t.frac, 18, col, t.status == "running", tick)
+        bar = _bar(t.frac, 14, col, t.status == "running", tick)
         prog = Text()
         prog.append_text(bar)
         prog.append(f" {int(t.frac * 100):3d}%", style=f"dim {col}")
@@ -350,16 +362,12 @@ def _tasks_panel(mgr: TaskManager, sel: int, tick: int) -> Panel:
             (f"{t.findings.get('medium', 0)}M ", SEV_COLOR["medium"] if t.findings.get('medium') else "dim"),
             (f"{t.findings.get('low', 0)}L", SEV_COLOR["low"] if t.findings.get('low') else "dim"))
         row_style = "on #16202e" if i == sel else ""
-        tgt = Text(target, style=("bold white" if i == sel else "white"))
-        lbl = _profile_label(t)
-        if lbl:
-            tgt.append(f"  {lbl}", style=f"dim {GOLD}")
-        tbl.add_row(marker, tgt,
-                    Text(t.status, style=col), prog, fnd, Text(_fmt_age(t.age), style="dim"),
-                    style=row_style)
+        tbl.add_row(marker, Text(target, style=("bold white" if i == sel else "white")),
+                    _scan_cell(t), Text(t.status, style=col), prog, fnd,
+                    Text(_fmt_age(t.age), style="dim"), style=row_style)
     if not mgr.tasks:
         tbl.add_row("", Text("no scans yet — press  n  to add targets and pick a scan", style="dim"),
-                    "", "", "", "")
+                    "", "", "", "", "")
     return Panel(tbl, title="[1] scans", title_align="left", border_style=BLUE, padding=(0, 1))
 
 

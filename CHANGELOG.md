@@ -17,8 +17,8 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
 - **Pick what runs against each target.** Adding a target in the dashboard (**`n`**) now asks
   what to run: **Native checks**, **Deep** (native + the Docker recon set — whatweb, wafw00f,
   testssl, nmap, nuclei), or **Pick tools…** (native + specific tools). Tool findings merge into
-  the live counters and the combined report, and the chosen profile shows as a gold tag next to
-  the target. For scripted runs, `temple-guard monitor <urls…> --deep` / `--tools nmap,nuclei`
+  the live counters and the combined report, and each row's **SCAN** column shows the chosen
+  profile. For scripted runs, `temple-guard monitor <urls…> --deep` / `--tools nmap,nuclei`
   preload a profile onto the given targets.
 ### Fixed
 - **Add-target prompt is now visible.** Pressing **`n`** (or **`w`**) opened a line prompt

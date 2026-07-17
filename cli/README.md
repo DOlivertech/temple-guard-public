@@ -140,7 +140,7 @@ Launching **Monitor** from the menu opens the dashboard **empty** — add target
 you add a target you choose **what runs against it**: **Native checks** (fast, no Docker),
 **Deep** (native + the Docker recon set — whatweb, wafw00f, testssl, nmap, nuclei), or **Pick
 tools…** (native + specific tools). Tool findings merge into the same live counters and the
-combined report. The chosen profile shows as a small gold tag next to the target.
+combined report, and each row's **SCAN** column shows the chosen profile.
 
 Every row is a real scan in its own thread (no mock data). For a scripted run, preload targets
 and a profile and let `-o` write the combined report on exit:
