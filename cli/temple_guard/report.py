@@ -92,7 +92,7 @@ def render(result: ScanResult, console: Console) -> None:
 def to_markdown(result: ScanResult) -> str:
     c = result.by_severity
     lines = [
-        f"# temple-guard — self-scan report",
+        "# temple-guard — self-scan report",
         "",
         f"**Target:** `{result.url}`  ",
         f"**Status:** {result.status}  ·  **Server:** {result.server or '—'}  ",

@@ -34,7 +34,7 @@ repo's **Releases**, then follow your platform:
 brew install pipx            # if you don't already have pipx
 pipx ensurepath              # once — then open a new terminal
 
-pipx install ./temple_guard-0.5.1-py3-none-any.whl
+pipx install ./temple_guard-0.5.4-py3-none-any.whl
 ```
 
 ### Windows (PowerShell)
@@ -42,18 +42,18 @@ pipx install ./temple_guard-0.5.1-py3-none-any.whl
 py -m pip install --user pipx    # if you don't already have pipx
 py -m pipx ensurepath            # once — then open a new terminal
 
-pipx install .\temple_guard-0.5.1-py3-none-any.whl
+pipx install .\temple_guard-0.5.4-py3-none-any.whl
 ```
 
 ### Linux / other
 ```bash
 python3 -m pip install --user pipx && python3 -m pipx ensurepath
-pipx install ./temple_guard-0.5.1-py3-none-any.whl
+pipx install ./temple_guard-0.5.4-py3-none-any.whl
 ```
 
 Once it's published to PyPI you'll be able to skip the wheel and just
 `pipx install temple-guard`. Prefer not to use pipx? `pip install
-./temple_guard-0.5.1-py3-none-any.whl` works too (ideally inside a virtualenv).
+./temple_guard-0.5.4-py3-none-any.whl` works too (ideally inside a virtualenv).
 
 **Manage it:** `pipx uninstall temple-guard` · to **update**, see below.
 
