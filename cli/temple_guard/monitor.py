@@ -54,6 +54,7 @@ class Task:
     started: float = 0.0
     ended: float = 0.0
     error: str = ""
+    result: object = None            # the ScanResult (for the combined report)
     _stop: threading.Event = field(default_factory=threading.Event)
 
     @property
@@ -128,6 +129,7 @@ class TaskManager:
 
         try:
             res = run_scan(t.url, on_event=on_event)
+            t.result = res
             if not res.reachable:
                 t.status, t.error, t.current = "failed", (res.error or "unreachable"), "unreachable"
                 self.log("ERR", f"failed  {t.url} — {t.error[:50]}")
@@ -296,7 +298,8 @@ def _tasks_panel(mgr: TaskManager, sel: int, tick: int) -> Panel:
                     Text(t.status, style=col), prog, fnd, Text(_fmt_age(t.age), style="dim"),
                     style=row_style)
     if not mgr.tasks:
-        tbl.add_row("", Text("no scans yet — press 'n' to add one", style="dim"), "", "", "", "")
+        tbl.add_row("", Text("no scans yet — press  n  to add one or more targets", style="dim"),
+                    "", "", "", "")
     return Panel(tbl, title="[1] scans", title_align="left", border_style=BLUE, padding=(0, 1))
 
 
@@ -313,7 +316,8 @@ def _logs_panel(mgr: TaskManager, height: int) -> Panel:
 
 
 def _footer() -> Text:
-    parts = [("↑↓/jk", "select"), ("s", "stop"), ("r", "restart"), ("n", "new scan"), ("q", "quit")]
+    parts = [("↑↓/jk", "select"), ("s", "stop"), ("r", "restart"), ("n", "add"),
+             ("w", "report"), ("q", "quit")]
     t = Text("  ")
     for key, desc in parts:
         t.append(f" {key} ", style=f"bold {BLUE} reverse")
@@ -391,21 +395,63 @@ class _Keys(threading.Thread):
             m.restart(m.tasks[s["sel"]])
         elif ch == "n":
             s["add"] = True
+        elif ch == "w":
+            s["report"] = True
 
 
 # ── entry points ─────────────────────────────────────────────────────────────
-def _prompt_url(console: Console) -> str:
+def _norm(u: str) -> str:
+    u = u.strip()
+    if not u or "://" in u:
+        return u
+    host = u.split("/", 1)[0]
+    local = host.split(":", 1)[0] in ("localhost", "127.0.0.1", "0.0.0.0") or ":" in host
+    return ("http://" if local else "https://") + u
+
+
+def _prompt_targets(console: Console) -> list:
+    import re
     from rich.prompt import Prompt
-    raw = Prompt.ask("[cyan]New target[/] [dim](e.g. https://beta.example.com — blank to cancel)[/]").strip()
-    if not raw or " " in raw:
-        return ""
-    return raw if "://" in raw else ("http://" if (":" in raw or raw.startswith(("localhost", "127."))) else "https://") + raw
+    raw = Prompt.ask("[cyan]Targets[/] [dim](space/comma separated — "
+                     "e.g. https://a.com https://b.com; blank to cancel)[/]").strip()
+    return [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
 
 
-def _dashboard(mgr: TaskManager, urls: list, console: Console) -> None:
+def _prompt_report_path(console: Console) -> str:
+    from rich.prompt import Prompt
+    return Prompt.ask("[cyan]Save combined report to[/] [dim](.html / .md / .json)[/]",
+                      default="temple-guard-monitor-report.html").strip()
+
+
+def write_report(mgr: TaskManager, path: str):
+    """Write ONE combined report across every scan that produced a result. Returns (n, Path|None)."""
+    from pathlib import Path
+
+    from . import report
+    results = [t.result for t in mgr.tasks if getattr(t, "result", None) is not None]
+    if not results:
+        return 0, None
+    p = Path(path)
+    ext = p.suffix.lower()
+    if ext == ".json":
+        import json
+        data = {"scans": [{"url": r.url, "reachable": r.reachable, "status": r.status,
+                           "server": r.server, "error": r.error,
+                           "findings": [f.__dict__ for f in r.findings]} for r in results]}
+        p.write_text(json.dumps(data, indent=2))
+    elif ext == ".md":
+        p.write_text(report.to_markdown_multi(results))
+    else:
+        if ext not in (".html", ".htm"):
+            p = p.with_suffix(".html")
+        p.write_text(report.to_html_multi(results))
+    return len(results), p
+
+
+def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str = None) -> None:
     for u in urls:
         mgr.add(u)
-    state = {"sel": 0, "quit": False, "add": False}
+    state = {"sel": 0, "quit": False, "add": False, "report": False}
     keys = _Keys(state, mgr)
     keys.start()
     tick = 0
@@ -413,12 +459,24 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console) -> None:
     try:
         with Live(console=console, screen=True, refresh_per_second=10, transient=True) as live:
             while not state["quit"]:
-                if state["add"]:
+                if state["add"]:                    # 'n' — add one or more targets, mid-run
                     state["add"] = False
                     live.stop()
-                    url = _prompt_url(console)
-                    if url:
-                        mgr.add(url)
+                    for u in _prompt_targets(console):
+                        mgr.add(u)
+                    live.start(refresh=True)
+                if state["report"]:                 # 'w' — write ONE combined report for all scans
+                    state["report"] = False
+                    live.stop()
+                    dest = _prompt_report_path(console)
+                    if dest:
+                        n, p = write_report(mgr, dest)
+                        if n:
+                            mgr.log("INF", f"wrote combined report ({n} scans) → {p}")
+                            console.print(f"[green]✓ combined report ({n} scans) → {p}[/]")
+                        else:
+                            console.print("[dim]No completed scans to report yet.[/]")
+                        time.sleep(1.4)
                     live.start(refresh=True)
                 state["sel"] = min(state["sel"], max(len(mgr.tasks) - 1, 0))
                 live.update(_render(mgr, state["sel"], tick, body_h))
@@ -429,6 +487,10 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console) -> None:
     finally:
         state["quit"] = True
         mgr.shutdown()
+    if report_path:
+        n, p = write_report(mgr, report_path)
+        if n:
+            console.print(f"[green]✓ combined report ({n} scans) → {p}[/]")
     _summary(mgr, console)
 
 
@@ -445,7 +507,7 @@ def _summary(mgr: TaskManager, console: Console) -> None:
          f"({tot.get('high', 0)}H {tot.get('medium', 0)}M {tot.get('low', 0)}L)", "dim")))
 
 
-def _headless(mgr: TaskManager, urls: list, console: Console) -> None:
+def _headless(mgr: TaskManager, urls: list, console: Console, report_path: str = None) -> None:
     """No-TTY fallback (pipes / CI): run the scans, print progress, then summarize."""
     for u in urls:
         mgr.add(u)
@@ -454,18 +516,23 @@ def _headless(mgr: TaskManager, urls: list, console: Console) -> None:
         console.print(f"[dim]running {c.get('running', 0)} · done {c.get('done', 0)} · "
                       f"failed {c.get('failed', 0)}[/]")
         time.sleep(1.0)
+    if report_path:
+        n, p = write_report(mgr, report_path)
+        if n:
+            console.print(f"[green]✓ combined report ({n} scans) → {p}[/]")
     _summary(mgr, console)
 
 
-def run(urls: list, workers: int = 4) -> None:
-    """Launch the live monitor for the given targets (add more with 'n')."""
+def run(urls: list, workers: int = 4, report_path: str = None) -> None:
+    """Launch the live monitor. Open the dashboard (add targets with 'n'), or preload `urls`.
+    `report_path`, if given, writes ONE combined report across all scans when the run ends."""
     console = Console()
     mgr = TaskManager(workers=workers)
     urls = [u for u in (urls or []) if u]
     if sys.stdin.isatty() and console.is_terminal:
-        _dashboard(mgr, urls, console)
+        _dashboard(mgr, urls, console, report_path)
     else:
         if not urls:
             console.print("[dim]No targets and no interactive terminal — nothing to monitor.[/]")
             return
-        _headless(mgr, urls, console)
+        _headless(mgr, urls, console, report_path)

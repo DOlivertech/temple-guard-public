@@ -808,32 +808,28 @@ def _tool_flow(dry: bool = False) -> None:
 
 @app.command()
 def monitor(
-    urls: list[str] = typer.Argument(None, help="Targets to scan concurrently (space-separated)."),
+    urls: list[str] = typer.Argument(None, help="Targets to preload; or add them in the dashboard with 'n'."),
     workers: int = typer.Option(4, "--workers", "-w", help="Max scans running at once."),
+    report: str = typer.Option(None, "--report", "-o",
+                               help="Write ONE combined report (.html/.md/.json) for all scans when the run ends."),
 ):
-    """Live dashboard — run several scans at once and watch/stop/restart them.
+    """Live dashboard — run several scans at once; add / stop / restart from inside it.
 
-    temple-guard monitor https://a.example.com https://b.example.com
+    temple-guard monitor                                       # open empty, add targets with 'n'
+    temple-guard monitor https://a.example.com https://b.example.com -o report.html
     """
     from . import monitor as _mon
     targets = [_norm_target(u, "url") for u in (urls or []) if u and u.strip()]
-    _mon.run(targets, workers=workers)
+    _mon.run(targets, workers=workers, report_path=report)
 
 
 def _monitor_flow() -> None:
-    raw = Prompt.ask(f"[{BLUE}]Targets to monitor[/] "
-                     f"[dim](space/comma separated — e.g. https://a.com https://b.com; blank = back)[/]",
-                     default="").strip()
-    targets = [_norm_target(u, "url") for u in re.split(r"[\s,]+", raw) if u]
-    if not targets:
-        console.print("[dim]No targets — back to the menu.[/]")
-        return
     _authz_notice()
-    console.print(Text.assemble(("Launching monitor for ", "dim"),
-                                (f"{len(targets)} scan(s)", f"bold {BLUE}"),
-                                (" — q/Esc to exit the dashboard.", "dim")))
+    console.print(Text.assemble(
+        ("Opening the monitor — press ", "dim"), ("n", f"bold {BLUE}"), (" to add targets, ", "dim"),
+        ("w", f"bold {BLUE}"), (" for a combined report, ", "dim"), ("q", f"bold {BLUE}"), (" to exit.", "dim")))
     from . import monitor as _mon
-    _mon.run(targets, workers=4)
+    _mon.run([], workers=4)
 
 
 @app.command()

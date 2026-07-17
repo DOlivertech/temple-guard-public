@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.6.1] — 2026-07-17
+### Changed
+- **Monitor: manage targets from inside the dashboard.** Launching **Monitor** from the menu
+  now opens the dashboard directly (empty) — press **`n`** to add one or more targets at any
+  time (even while other scans run), instead of a prompt up front.
+### Added
+- **Combined monitor report.** Press **`w`** in the dashboard (or `temple-guard monitor
+  <urls…> -o report.html`) to write **one** report across every scan — a summary table +
+  per-target severity cards and findings, in `.html` / `.md` / `.json`.
+
 ## [0.6.0] — 2026-07-16
 ### Added
 - **Live monitor** — `temple-guard monitor <urls…>` (or **Monitor** in the interactive menu)

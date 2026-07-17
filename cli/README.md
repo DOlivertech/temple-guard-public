@@ -132,11 +132,14 @@ findings-severity meter, an activity sparkline, per-scan status, and a live log 
 | `↑` `↓` / `j` `k` | select a scan |
 | `s` | stop the selected scan |
 | `r` | restart the selected scan |
-| `n` | queue a new target |
+| `n` | add one or more targets (any time, even while scans run) |
+| `w` | write **one combined report** for all scans (`.html` / `.md` / `.json`) |
 | `q` / `Esc` | quit the dashboard |
 
-Every row is a real scan running in its own thread — no mock data. Without an interactive
-terminal (a pipe / CI) it falls back to a headless run and prints a summary.
+Launching **Monitor** from the menu opens the dashboard **empty** — add targets with `n`.
+Every row is a real scan in its own thread (no mock data). For a scripted run, `-o` writes the
+combined report on exit: `temple-guard monitor <urls…> -o report.html`. Without an interactive
+terminal (a pipe / CI) it runs headless and prints a summary.
 
 ## Deep scan — Docker tools (optional)
 
