@@ -29,12 +29,21 @@ from . import tools as _tools
 from .checks import CHECK_PLAN, scan as run_scan
 from .report import BLUE, PURPLE
 
+# Optional extension: extra scan profiles + their runners, contributed by the build.
+# Absent in the stock build — the dashboard then offers only the defensive profiles.
+try:
+    from . import monitor_ext as _ext
+except Exception:  # noqa: BLE001 — no extension installed → defensive-only
+    _ext = None
+
 TOTAL_STEPS = len(CHECK_PLAN)
 DEEP_TOOLS = list(_tools.DEFENSIVE)          # the `--deep` recon set: whatweb, wafw00f, testssl, nmap, nuclei
 MONITOR_TOOLS = DEEP_TOOLS + ["nikto"]       # selectable per target in the dashboard (nikto is opt-in — slow)
 
 GOLD = "#ffd60a"
 TIP = "#fff7cc"
+HOT = "#f87171"        # a "hot" (offensive) task tints the saber + its SCAN tag red
+HOT_TIP = "#fecaca"
 STEEL = "#94a3b8"
 TRACK = "#242a36"
 SEV_COLOR = {"high": "#f87171", "medium": "#fbbf24", "low": BLUE, "info": STEEL}
@@ -52,6 +61,8 @@ class Task:
     id: int
     url: str
     tools: list = field(default_factory=list)   # extra Docker tools to run after the native checks
+    offensive: bool = False          # a "hot" task (tints the saber + SCAN tag red); set by the extension
+    op: object = None                # an extension-supplied unit of work (run via _ext.run_op) instead of a scan
     status: str = "queued"          # queued | running | done | failed | stopped
     step: int = 0                   # progress steps completed (0..total)
     current: str = "queued"
@@ -64,7 +75,9 @@ class Task:
 
     @property
     def total(self) -> int:
-        """Progress steps for this task: the native checks + one per selected Docker tool."""
+        """Progress steps: 1 for an extension op, else the native checks + one per Docker tool."""
+        if self.op is not None:
+            return 1
         return TOTAL_STEPS + len(self.tools)
 
     @property
@@ -101,11 +114,11 @@ class TaskManager:
     def log(self, level: str, msg: str) -> None:
         self.log_lines.append((time.strftime("%H:%M:%S"), level, msg))
 
-    def add(self, url: str, tools: list = None) -> Task:
-        t = Task(id=next(self._ids), url=url, tools=list(tools or []))
+    def add(self, url: str, tools: list = None, offensive: bool = False, op: object = None) -> Task:
+        t = Task(id=next(self._ids), url=url, tools=list(tools or []), offensive=offensive, op=op)
         with self._lock:
             self.tasks.append(t)
-        lbl = _profile_label(t)
+        lbl = _task_tag(t)
         self.log("INF", f"queued  {url}" + (f"  ·  {lbl}" if lbl else ""))
         self._pool.submit(self._run, t)
         return t
@@ -118,9 +131,12 @@ class TaskManager:
 
     def restart(self, t: Task) -> Task:
         self.log("INF", f"restart {t.url}")
-        return self.add(t.url, t.tools)
+        return self.add(t.url, t.tools, t.offensive, t.op)
 
     def _run(self, t: Task) -> None:
+        if t.op is not None and _ext is not None:   # an extension op (not a defensive scan)
+            self._run_op(t)
+            return
         t.status = "running"
         t.started = time.monotonic()
         t.current = "connecting"
@@ -189,6 +205,29 @@ class TaskManager:
                          f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
             t.step += 1
 
+    def _run_op(self, t: Task) -> None:
+        """Run an extension-supplied op (bounded, returns findings) and fold them into the report."""
+        t.status = "running"
+        t.started = time.monotonic()
+        t.current = _task_tag(t) or "op"
+        self.log("INF", f"op start {t.url} · {t.current}")
+        try:
+            findings = _ext.run_op(t.op, t.url)      # bounded; returns [Finding]
+            from .checks import ScanResult
+            res = ScanResult(url=t.url)
+            res.findings.extend(findings)
+            t.result = res
+            for f in findings:
+                t.findings[f.severity] += 1
+                self.log(LEVEL_FOR_SEV.get(f.severity, "INF"),
+                         f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
+            t.step, t.status, t.current = t.total, "done", "done"
+            self.log("INF", f"done    {t.url} — {t.n_findings} findings")
+        except Exception as exc:  # noqa: BLE001 — surface any op error as a failed task
+            t.status, t.error, t.current = "failed", str(exc), "error"
+            self.log("ERR", f"error   {t.url} — {str(exc)[:50]}")
+        t.ended = time.monotonic()
+
     def counts(self) -> Counter:
         return Counter(t.status for t in self.tasks)
 
@@ -227,15 +266,25 @@ def _profile_label(t: Task) -> str:
     return f"{len(t.tools)} tools"
 
 
+def _task_tag(t: Task) -> str:
+    """The SCAN-column / log tag for a task — the extension names its own (offensive) tasks."""
+    if t.offensive and _ext is not None:
+        return _ext.scan_label(t)
+    return _profile_label(t)
+
+
 # ── rendering ────────────────────────────────────────────────────────────────
-def _saber() -> Text:
-    """A little gold lightsaber — a steel hilt (left) with a single blade extending out."""
+def _saber(hot: bool = False) -> Text:
+    """A little lightsaber — a steel hilt with a single blade. Gold normally; red when the
+    highlighted task is 'hot' (an offensive op)."""
+    blade = HOT if hot else GOLD
+    tip = HOT_TIP if hot else TIP
     return Text.assemble(
         ("▪", STEEL),            # pommel cap
         ("▬▬", STEEL),           # hilt — a stubby steel rectangle (the grip)
-        ("▮", GOLD),             # emitter — where the blade ignites
-        ("━━━━━", GOLD),          # the blade
-        ("╾", TIP),              # glowing tip
+        ("▮", blade),            # emitter — where the blade ignites
+        ("━━━━━", blade),         # the blade
+        ("╾", tip),              # glowing tip
     )
 
 
@@ -284,12 +333,18 @@ def _sparkline(vals: list[int], width: int = 40) -> Text:
     return t
 
 
-def _header(mgr: TaskManager) -> Text:
+def _selected(mgr: TaskManager, sel: int) -> Task:
+    return mgr.tasks[sel] if (mgr.tasks and 0 <= sel < len(mgr.tasks)) else None
+
+
+def _header(mgr: TaskManager, sel: int = 0) -> Text:
     up = _fmt_age(time.monotonic() - mgr.started_at)
     c = mgr.counts()
+    sel_t = _selected(mgr, sel)
+    hot = bool(sel_t and sel_t.offensive)
     return Text.assemble(
-        ("  ", ""), _saber(),
-        ("  temple-guard ", f"bold {PURPLE}"), ("monitor", f"bold {BLUE}"),
+        ("  ", ""), _saber(hot),
+        ("  temple-guard ", f"bold {PURPLE}"), ("monitor", f"bold {HOT if hot else BLUE}"),
         (f"   uptime {up}", "dim"),
         (f"   ·   {len(mgr.tasks)} scans", "dim"),
         ("      ", ""),
@@ -336,7 +391,10 @@ def _status_panel(mgr: TaskManager) -> Panel:
 
 
 def _scan_cell(t: Task) -> Text:
-    """The SCAN column — what runs against this target: native / deep / the tool set."""
+    """The SCAN column — what runs against this target: native / deep / the tool set (or a red
+    tag for an offensive op)."""
+    if t.offensive:
+        return Text((_task_tag(t) or "op")[:8], style=f"bold {HOT}")
     if not t.tools:
         return Text("native", style="dim")
     if list(t.tools) == DEEP_TOOLS:
@@ -403,7 +461,7 @@ def _render(mgr: TaskManager, sel: int, tick: int, body_h: int) -> Layout:
     mgr.sample()
     layout = Layout()
     layout.split_column(
-        Layout(_header(mgr), name="header", size=1),
+        Layout(_header(mgr, sel), name="header", size=1),
         Layout(name="top", size=8),
         Layout(name="body", ratio=1),
         Layout(_footer(), name="footer", size=1))
@@ -553,21 +611,27 @@ def _norm(u: str) -> str:
     return ("http://" if local else "https://") + u
 
 
+def _spec(tools: list = None, offensive: bool = False, op: object = None) -> dict:
+    """A profile spec: what to run against a target."""
+    return {"tools": list(tools or []), "offensive": offensive, "op": op}
+
+
 def _prompt_targets(console: Console) -> tuple:
     """Ask for one or more targets, then what should run against them.
-    Returns (urls, tools) — `tools` is the extra Docker tool set (empty = native checks only)."""
+    Returns (urls, spec) — spec is {tools, offensive, op}."""
     import re
     from rich.prompt import Prompt
     raw = Prompt.ask("[cyan]Targets[/] [dim](space/comma separated — "
                      "e.g. https://a.com https://b.com; blank to cancel)[/]").strip()
     urls = [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
     if not urls:
-        return [], []
+        return [], _spec()
     return urls, _prompt_profile(console, len(urls))
 
 
-def _prompt_profile(console: Console, n_targets: int) -> list:
-    """Pick what runs against the new target(s): native checks, the deep set, or chosen tools."""
+def _prompt_profile(console: Console, n_targets: int) -> dict:
+    """Pick what runs against the new target(s): native, deep, chosen tools, or an extension
+    profile. Returns a spec {tools, offensive, op}."""
     import re
 
     from rich.prompt import Prompt
@@ -579,11 +643,17 @@ def _prompt_profile(console: Console, n_targets: int) -> list:
     console.print(f"    [bold]2[/] Deep            [dim]— native + Docker recon: "
                   f"{', '.join(DEEP_TOOLS)}[/]")
     console.print("    [bold]3[/] Pick tools…     [dim]— native + specific Docker tools[/]")
-    choice = Prompt.ask("  choose", choices=["1", "2", "3"], default="1")
+    choices = ["1", "2", "3"]
+    if _ext is not None:
+        console.print(f"    [bold]4[/] {_ext.PROFILE_LABEL}")
+        choices.append("4")
+    choice = Prompt.ask("  choose", choices=choices, default="1")
     if choice == "1":
-        return []
+        return _spec()
     if choice == "2":
-        return list(DEEP_TOOLS)
+        return _spec(DEEP_TOOLS)
+    if choice == "4" and _ext is not None:
+        return _ext.pick_profile(console, n_targets) or _spec()
     console.print()
     for i, key in enumerate(MONITOR_TOOLS, 1):
         console.print(f"    [bold]{i:>2}[/] {key:8} [dim]— {_tools.TOOLS[key].desc}[/]")
@@ -598,7 +668,7 @@ def _prompt_profile(console: Console, n_targets: int) -> list:
             else (tok if tok in MONITOR_TOOLS else None)
         if key and key not in picked:
             picked.append(key)
-    return picked
+    return _spec(picked)
 
 
 def _prompt_report_path(console: Console) -> str:
@@ -676,9 +746,9 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str 
                         state["add"] = False
                         keys.pause()                # step the key-reader aside so typing echoes
                         live.stop()
-                        new_urls, picked = _prompt_targets(console)
+                        new_urls, spec = _prompt_targets(console)
                         for u in new_urls:
-                            mgr.add(u, picked)
+                            mgr.add(u, tools=spec["tools"], offensive=spec["offensive"], op=spec["op"])
                         live.start(refresh=True)
                         keys.resume()
                     if state["report"]:             # 'w' — write ONE combined report for all scans
