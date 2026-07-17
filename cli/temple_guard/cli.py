@@ -33,25 +33,27 @@ app = typer.Typer(add_completion=False, no_args_is_help=False,
                   help="Scan a web app you own and get a remediation report.")
 console = Console()
 
-# --- brand mark: the Temple Guard shield (navy shield · gold mask · saberstaff)
+# --- brand mark: the Temple Guard shield (blue shield · gold mask · a lightsaber blade in front)
 SHIELD = "#38bdf8"   # blue shield outline
-SABER = "#ffd60a"    # yellow saberstaff blades
-HILT = "#94a3b8"     # steel hilt guards
+SABER = "#ffd60a"    # gold lightsaber blade
+HILT = "#94a3b8"     # steel hilt
 MASK = "#d9c290"     # gold guard mask
 EYE = "#6b5a2a"      # dark eye slits
+TIP = "#fff7cc"      # bright glowing blade tip
 
-# each row is a list of (text, colour|None) segments — 11 cells wide, saber on col 5
+# each row is a list of (text, colour|None) segments — 11 cells wide, a thick gold blade IN FRONT
+# on the centre column (bright tip up top, steel hilt below), drawn over the guard mask.
 _EMBLEM = [
     [("  ╭───────────╮  ", SHIELD)],
-    [("  │     ", SHIELD), ("┃", SABER), ("     │  ", SHIELD)],
-    [("  │    ", SHIELD), ("▟", SABER), ("█", HILT), ("▙", SABER), ("    │  ", SHIELD)],
-    [("  │   ", SHIELD), ("▟", MASK), ("█", MASK), ("█", MASK), ("█", MASK), ("▙", MASK), ("   │  ", SHIELD)],
-    [("  │   ", SHIELD), ("█", MASK), ("▜", EYE), ("█", HILT), ("▛", EYE), ("█", MASK), ("   │  ", SHIELD)],
-    [("  │   ", SHIELD), ("▜", MASK), ("█", MASK), ("█", MASK), ("█", MASK), ("▛", MASK), ("   │  ", SHIELD)],
-    [("  │    ", SHIELD), ("▜", SABER), ("█", HILT), ("▛", SABER), ("    │  ", SHIELD)],
-    [("  ╰╮    ", SHIELD), ("┃", SABER), ("    ╭╯  ", SHIELD)],
-    [("   ╰╮   ", SHIELD), ("┃", SABER), ("   ╭╯   ", SHIELD)],
-    [("    ╰───", SHIELD), ("┸", SABER), ("───╯    ", SHIELD)],
+    [("  │     ", SHIELD), ("█", TIP), ("     │  ", SHIELD)],
+    [("  │     ", SHIELD), ("█", SABER), ("     │  ", SHIELD)],
+    [("  │   ", SHIELD), ("▟█", MASK), ("█", SABER), ("█▙", MASK), ("   │  ", SHIELD)],
+    [("  │   ", SHIELD), ("█", MASK), ("▜", EYE), ("█", SABER), ("▛", EYE), ("█", MASK), ("   │  ", SHIELD)],
+    [("  │   ", SHIELD), ("▜█", MASK), ("█", SABER), ("█▛", MASK), ("   │  ", SHIELD)],
+    [("  │    ", SHIELD), ("▟", HILT), ("█", SABER), ("▙", HILT), ("    │  ", SHIELD)],
+    [("  │    ", SHIELD), ("▐█▌", HILT), ("    │  ", SHIELD)],
+    [("   ╰╮   ", SHIELD), ("█", HILT), ("   ╭╯   ", SHIELD)],
+    [("    ╰───", SHIELD), ("┸", HILT), ("───╯    ", SHIELD)],
 ]
 _EMBLEM_W = 17
 
