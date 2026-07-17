@@ -29,10 +29,13 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
   deep scan runs immediately (also on the interactive menu). Nothing to build or vendor — the
   images are public and pulled on demand.
 ### Fixed
-- **Arrow keys no longer quit the monitor.** In application-cursor-key terminals the up/down
-  arrows arrive as `ESC O A` / `ESC O B` (not `ESC [ A`); the dashboard only matched the latter,
-  so an arrow fell through to "quit". It now recognizes both forms (and ignores other escape
-  sequences instead of quitting).
+- **Arrow keys no longer quit the monitor.** The key reader used buffered `stdin.read(1)`, so an
+  arrow's `ESC [ A` burst got split — the lone `ESC` read as "quit" while `[A` sat in Python's
+  buffer where `select()` couldn't see it. It now reads the raw fd (`os.read`) and matches the
+  whole sequence at once — both `ESC [ A` and application-cursor `ESC O A`; every other escape
+  sequence is ignored, never a quit.
+- **`s` / `r` always give feedback.** Pressing `s` on a scan that already finished (or `r` on one
+  still running) now logs a clear reason instead of doing nothing silently.
 - **Leaving the monitor is now gated.** Quitting asks **"Quit the monitor?"** first — and warns
   when scans are still running (defaulting to *stay*). The only quit keys are **`Esc`** and
   **`Ctrl+C`**; **`q`** no longer exits (it hints to use Esc). A second `Ctrl+C` at the prompt

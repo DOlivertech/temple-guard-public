@@ -10,6 +10,7 @@ progress and findings come from the scan's own event stream. No mock services.
 from __future__ import annotations
 
 import itertools
+import os
 import sys
 import threading
 import time
@@ -447,10 +448,22 @@ class _Keys(threading.Thread):
                         break
                     tty.setcbreak(fd)                               # back to single-key mode
                     continue
-                if select.select([sys.stdin], [], [], 0.15)[0]:
+                if select.select([fd], [], [], 0.15)[0]:
                     if self._pause.is_set():
-                        continue   # a prompt just opened — leave the byte for it
-                    self._handle(sys.stdin.read(1), select, termios)
+                        continue   # a prompt just opened — leave the bytes for it
+                    try:
+                        data = os.read(fd, 8)   # raw fd read — grabs a whole ESC[A burst at once
+                    except OSError:
+                        continue
+                    if not data:
+                        continue
+                    # a lone ESC head may be an arrow whose tail is a hair behind — wait briefly
+                    if data == b"\x1b" and select.select([fd], [], [], 0.05)[0]:
+                        try:
+                            data += os.read(fd, 7)
+                        except OSError:
+                            pass
+                    self._handle(data)
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -468,46 +481,62 @@ class _Keys(threading.Thread):
         """Return to single-key (cbreak) mode after a line prompt."""
         self._pause.clear()
 
-    def _handle(self, ch: str, select, termios) -> None:  # noqa: ANN001
+    def _handle(self, data: bytes) -> None:
         s, m = self.state, self.mgr
-        n = len(m.tasks)
-        if ch == "\x1b":  # a bare ESC, or the introducer of an arrow key (ESC[A or ESC O A)
-            seq = ""
-            while len(seq) < 6:
-                # wait a touch longer for the FIRST follow-byte, then only briefly for the rest;
-                # a real arrow arrives as one burst, a lone Esc yields nothing.
-                if not select.select([sys.stdin], [], [], 0.12 if not seq else 0.03)[0]:
-                    break
-                c = sys.stdin.read(1)
-                seq += c
-                if (c.isalpha() or c == "~") and len(seq) >= 2:  # final byte of a CSI/SS3 seq
-                    break
-            if not seq:                       # nothing followed → a real Esc → request quit (gated)
+        if data[:1] == b"\x1b":               # an escape sequence, or a bare Esc
+            if data in (b"\x1b[A", b"\x1bOA"):
+                self._move(-1)                # ↑ — both CSI (ESC[A) and SS3 (ESC O A / app-cursor mode)
+            elif data in (b"\x1b[B", b"\x1bOB"):
+                self._move(1)                 # ↓
+            elif data == b"\x1b":             # a real, lone Esc → request quit (gated)
                 s["confirm_quit"] = True
-                return
-            final = seq[-1]
-            if final == "A":                  # ↑ — works for both ESC[A and ESC O A (app-cursor mode)
-                ch = "k"
-            elif final == "B":                # ↓
-                ch = "j"
-            else:                             # ←/→, Home/End, F-keys, … — ignore, do NOT quit
-                return
-        if ch == "\x03":                      # Ctrl-C as a byte → request quit (gated)
-            s["confirm_quit"] = True
-        elif ch == "j" and n:
-            s["sel"] = min(s["sel"] + 1, n - 1)
-        elif ch == "k" and n:
-            s["sel"] = max(s["sel"] - 1, 0)
-        elif ch == "s" and n:
-            m.stop(m.tasks[s["sel"]])
-        elif ch == "r" and n:
-            m.restart(m.tasks[s["sel"]])
-        elif ch == "n":
-            s["add"] = True
-        elif ch == "w":
-            s["report"] = True
-        elif ch == "q":                       # q no longer quits — guide the user to Esc / Ctrl-C
-            m.log("INF", "press Esc or Ctrl-C to leave the monitor")
+            # any other escape sequence (←/→, Home/End, F-keys, …) → ignore, never quit
+            return
+        for byte in data:                     # plain keys — handle each byte in the burst
+            ch = chr(byte)
+            if ch == "\x03":                  # Ctrl-C as a byte → request quit (gated)
+                s["confirm_quit"] = True
+            elif ch == "j":
+                self._move(1)
+            elif ch == "k":
+                self._move(-1)
+            elif ch == "s":
+                self._stop_selected()
+            elif ch == "r":
+                self._restart_selected()
+            elif ch == "n":
+                s["add"] = True
+            elif ch == "w":
+                s["report"] = True
+            elif ch == "q":                   # q no longer quits — guide the user to Esc / Ctrl-C
+                m.log("INF", "press Esc or Ctrl-C to leave the monitor")
+
+    def _move(self, delta: int) -> None:
+        n = len(self.mgr.tasks)
+        if n:
+            self.state["sel"] = max(0, min(self.state["sel"] + delta, n - 1))
+
+    def _stop_selected(self) -> None:
+        m, s = self.mgr, self.state
+        if not m.tasks:
+            m.log("INF", "no scans to stop")
+            return
+        t = m.tasks[s["sel"]]
+        if t.status in ("queued", "running"):
+            m.stop(t)                         # logs "stopping {url}"
+        else:
+            m.log("INF", f"{t.url} is already {t.status} — nothing to stop")
+
+    def _restart_selected(self) -> None:
+        m, s = self.mgr, self.state
+        if not m.tasks:
+            m.log("INF", "no scans to restart")
+            return
+        t = m.tasks[s["sel"]]
+        if t.status in ("done", "failed", "stopped"):
+            m.restart(t)                      # logs "restart {url}", re-queues a fresh scan
+        else:
+            m.log("WRN", f"{t.url} is still {t.status} — stop it first, then restart")
 
 
 # ── entry points ─────────────────────────────────────────────────────────────
