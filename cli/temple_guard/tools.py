@@ -11,12 +11,17 @@ reach an app running on your host.
 """
 from __future__ import annotations
 
+import itertools
+import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 from urllib.parse import urlparse
+
+_RUN_SEQ = itertools.count(1)   # unique suffix for cancellable-run container names
 
 from .checks import Finding
 
@@ -175,13 +180,48 @@ def _docker_cmd(image: str, argv: list, extra: tuple = (), interactive: bool = F
     return base
 
 
-def _run(image: str, argv: list[str], timeout: int, extra: tuple = ()) -> tuple[int, str, str]:
+def _run(image: str, argv: list[str], timeout: int, extra: tuple = (),
+         stop_event=None) -> tuple[int, str, str]:
     cmd = _docker_cmd(image, argv, extra)
+    if stop_event is None:
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            return p.returncode, p.stdout, p.stderr
+        except subprocess.TimeoutExpired:
+            return 124, "", f"timed out after {timeout}s"
+        except Exception as exc:  # noqa: BLE001
+            return 1, "", str(exc)
+    # cancellable path: name the container and `docker kill` it via the daemon on stop/timeout.
+    # (SIGTERM to `docker run` is unreliable — a tool running as the container's PID 1 ignores it,
+    # so we force-stop through the daemon instead.) Output streams to temp files so pipes never fill.
+    import tempfile
+    name = f"tg-scan-{os.getpid()}-{next(_RUN_SEQ)}"
+    cmd = _docker_cmd(image, argv, ("--name", name) + tuple(extra))
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return p.returncode, p.stdout, p.stderr
-    except subprocess.TimeoutExpired:
-        return 124, "", f"timed out after {timeout}s"
+        with tempfile.TemporaryFile() as ofile, tempfile.TemporaryFile() as efile:
+            proc = subprocess.Popen(cmd, stdout=ofile, stderr=efile)
+            deadline = time.monotonic() + timeout
+            stopped = timed_out = False
+            while proc.poll() is None:
+                stopped = stop_event.is_set()
+                timed_out = not stopped and time.monotonic() > deadline
+                if stopped or timed_out:
+                    subprocess.run(["docker", "kill", name], capture_output=True, timeout=12)
+                    try:
+                        proc.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
+                    break
+                time.sleep(0.2)
+            ofile.seek(0); efile.seek(0)
+            out = ofile.read().decode("utf-8", "replace")
+            err = efile.read().decode("utf-8", "replace")
+            if stopped:
+                return 130, out, "stopped by user"
+            if timed_out:
+                return 124, out, f"timed out after {timeout}s"
+            return proc.returncode, out, err
     except Exception as exc:  # noqa: BLE001
         return 1, "", str(exc)
 
@@ -453,12 +493,17 @@ TOOLS: dict[str, Tool] = {
 DEFENSIVE = ["whatweb", "wafw00f", "testssl", "nmap", "nuclei"]
 
 
-def run_tool(key: str, url: str, timeout: Optional[int] = None) -> tuple[list[Finding], str, bool]:
-    """Run one tool in its container. Returns (findings, raw_output, ok)."""
+def run_tool(key: str, url: str, timeout: Optional[int] = None,
+             stop_event=None) -> tuple[list[Finding], str, bool]:
+    """Run one tool in its container. Returns (findings, raw_output, ok).
+    Pass `stop_event` (a threading.Event) to make it cancellable — when set, the running
+    container is terminated and it returns no findings (the scan is being aborted)."""
     tool = TOOLS[key]
     rc, out, err = _run(tool.image, tool.argv(_container_host(_host(url)), _port(url), url),
-                        timeout or tool.default_timeout, tool.extra)
+                        timeout or tool.default_timeout, tool.extra, stop_event=stop_event)
     raw = out if out.strip() else err
+    if rc == 130:                                  # stopped by the user — abort quietly
+        return [], raw, False
     if rc != 0 and not out.strip():
         reason, fix = _diagnose(err, rc)
         return ([Finding(f"{tool.name} — {reason}", "info", tool.cat,

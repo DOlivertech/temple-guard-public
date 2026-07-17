@@ -36,6 +36,11 @@ that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) 
   sequence is ignored, never a quit.
 - **`s` / `r` always give feedback.** Pressing `s` on a scan that already finished (or `r` on one
   still running) now logs a clear reason instead of doing nothing silently.
+- **`s` actually halts a running scan.** On a **deep** scan, stop used to only apply *between*
+  tools — a long `testssl` / `nuclei` / `nmap` kept running for minutes. The tool runner is now
+  cancellable: it names its container and `docker kill`s it through the daemon (a tool running as
+  the container's PID 1 ignores a forwarded `SIGTERM`), so the scan stops in ~1–2s and leaves no
+  container behind.
 - **Leaving the monitor is now gated.** Quitting asks **"Quit the monitor?"** first — and warns
   when scans are still running (defaulting to *stay*). The only quit keys are **`Esc`** and
   **`Ctrl+C`**; **`q`** no longer exits (it hints to use Esc). A second `Ctrl+C` at the prompt

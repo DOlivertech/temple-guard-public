@@ -72,7 +72,7 @@ report. Everything lives in `cli/`; it ships to end users via `pipx`.
   `whatweb, wafw00f, testssl, nmap, nuclei` (the `--deep` set) + `nikto` (opt-in). Entry
   points `run_tool` (parsed→findings), `run_raw` (full-flag passthrough), `kali_shell`. A
   `localhost` / `host.docker.internal` target resolves to the host's **numeric IPv4** (works
-  around Docker-Desktop's dead IPv6 dual-stack); dry-run previews skip resolution. **Prereq =
+  around Docker-Desktop's dead IPv6 dual-stack); dry-run previews skip resolution. `run_tool(stop_event=…)` is cancellable — the monitor passes a task's stop Event so a long tool is killed on `s` (names the container, `docker kill` via the daemon; SIGTERM to a PID-1 tool is ignored). **Prereq =
   Docker running** (nothing to vendor — images are public, pulled on demand incl. `alpine` for
   the localhost remap). `temple-guard doctor [--pull]` verifies Docker + pre-pulls
   (`tools.defensive_images()`); every "Docker unavailable" path prints `tools.docker_hint()`

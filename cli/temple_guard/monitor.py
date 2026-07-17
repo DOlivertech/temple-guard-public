@@ -113,6 +113,7 @@ class TaskManager:
     def stop(self, t: Task) -> None:
         if t.status in ("queued", "running"):
             t._stop.set()
+            t.current = "stopping…"
             self.log("WRN", f"stopping {t.url}")
 
     def restart(self, t: Task) -> Task:
@@ -173,11 +174,14 @@ class TaskManager:
             t.current = key
             self.log("INF", f"tool    {t.url} · {key} …")
             try:
-                findings, _raw, _ok = _tools.run_tool(key, t.url)
+                # pass the stop event so a long tool (testssl / nuclei / nmap) is killed on 's'
+                findings, _raw, _ok = _tools.run_tool(key, t.url, stop_event=t._stop)
             except Exception as exc:  # noqa: BLE001 — one tool failing shouldn't sink the scan
                 self.log("ERR", f"{key} error — {str(exc)[:50]}")
                 t.step += 1
                 continue
+            if t._stop.is_set():           # stopped mid-tool → abort now (container already terminated)
+                raise _Stopped()
             for f in findings:
                 t.findings[f.severity] += 1
                 res.findings.append(f)
