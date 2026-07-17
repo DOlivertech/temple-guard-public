@@ -120,6 +120,16 @@ non-zero when a **HIGH** finding is present, so it slots straight into CI.
 
 `temple-guard` can run **multiple scans concurrently** and watch them in a live,
 btop-style dashboard:
+
+![temple-guard monitor](docs/screenshots/cli-monitor.png)
+
+*Two deep scans in the live monitor. Top row: findings-severity meters (HIGH/MED/LOW/INFO), an
+activity sparkline, and a status panel. Middle: the per-scan table — target, **SCAN** profile
+(`deep`), status, an animated progress bar, findings, and age — here one scan is **stopped**
+mid-run (75%) and one is **done** (100%). Right: a live, scrolling **log stream** (security-header,
+SPF/DMARC, and Docker-tool findings as they land). Keys along the bottom: select · stop · restart
+· add · report · quit.*
+
 ```bash
 temple-guard monitor https://a.example.com https://b.example.com   # scan both at once
 temple-guard monitor https://a.example.com -w 8                    # up to 8 concurrent
