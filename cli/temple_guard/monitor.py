@@ -115,12 +115,16 @@ class TaskManager:
         self.log_lines.append((time.strftime("%H:%M:%S"), level, msg))
 
     def add(self, url: str, tools: list = None, offensive: bool = False, op: object = None) -> Task:
+        """Add a target. ADDITIVE ONLY — appends a brand-new Task and submits it to the pool;
+        it never touches, restarts, or cancels any existing task. Adding while others run just
+        grows the list; the new task runs as soon as a worker is free (up to `workers`), and
+        the running ones keep their own threads, progress, and findings untouched."""
         t = Task(id=next(self._ids), url=url, tools=list(tools or []), offensive=offensive, op=op)
         with self._lock:
             self.tasks.append(t)
         lbl = _task_tag(t)
         self.log("INF", f"queued  {url}" + (f"  ·  {lbl}" if lbl else ""))
-        self._pool.submit(self._run, t)
+        self._pool.submit(self._run, t)   # queues behind busy workers; never preempts a running scan
         return t
 
     def stop(self, t: Task) -> None:
