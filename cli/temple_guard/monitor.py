@@ -658,12 +658,20 @@ def _spec(tools: list = None, offensive: bool = False, op: object = None) -> dic
 
 def _prompt_targets(console: Console) -> tuple:
     """Ask for one or more targets, then what should run against them.
-    Returns (urls, spec) — spec is {tools, offensive, op}."""
+    Returns (urls, spec) — spec is {tools, offensive, op}. Authorized scope targets,
+    if any, can be picked instead of / in addition to typed URLs."""
     import re
     from rich.prompt import Prompt
+    from . import clients
+    urls = []
+    if clients.all_targets():
+        console.print("  [dim]Tip: pick one from your authorized scope, or type target(s) below.[/]")
+        picked = clients.pick_target(console)      # one scoped target (or None)
+        if picked:
+            urls.append(_norm(picked))
     raw = Prompt.ask("[cyan]Targets[/] [dim](space/comma separated — "
-                     "e.g. https://a.com https://b.com; blank to cancel)[/]").strip()
-    urls = [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
+                     "e.g. https://a.com https://b.com; blank = done)[/]").strip()
+    urls += [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
     if not urls:
         return [], _spec()
     return urls, _prompt_profile(console, len(urls))
