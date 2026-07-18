@@ -20,7 +20,9 @@ SEV_LABEL = {"high": "HIGH", "medium": "MED", "low": "LOW", "info": "INFO"}
 CAT_ICON = {"transport": "🔒", "headers": "📋", "cookies": "🍪",
             "disclosure": "📢", "exposure": "📂", "methods": "🔧",
             "email": "📧", "tls": "🔐", "ports": "🔌", "templates": "🎯",
-            "web": "🌐", "waf": "🛡️", "tech": "🧩"}
+            "web": "🌐", "waf": "🛡️", "tech": "🧩",
+            "osint": "🔎", "humint": "👤", "phone": "📱", "smb": "🗄️",
+            "recon": "🛰️", "discovery": "🗺️", "auth": "🔑", "cors": "🈁"}
 
 
 def _summary_bar(result: ScanResult) -> Text:

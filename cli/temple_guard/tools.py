@@ -560,3 +560,10 @@ def kali_shell(image: Optional[str] = None) -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"could not start shell: {exc}")
         return 1
+
+
+# ── recon / OSINT tools (defensive) — merged into the registry at import time ──
+# Imported at the very bottom so Tool + the _run/_remap/… helpers above are already defined
+# (recon_tools imports them back from here).
+from . import recon_tools  # noqa: E402
+TOOLS.update(recon_tools.RECON_TOOLS)

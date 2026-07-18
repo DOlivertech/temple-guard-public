@@ -27,7 +27,7 @@ except Exception:  # pragma: no cover
 
 from . import __version__, tools
 from .checks import CHECK_PLAN, SEV_RANK, scan as run_scan
-from .report import BLUE, PURPLE, make_progress_reporter, render, to_html, to_markdown, to_pdf
+from .report import BLUE, PURPLE, SEV_STYLE, make_progress_reporter, render, to_html, to_markdown, to_pdf
 
 app = typer.Typer(add_completion=False, no_args_is_help=False,
                   help="Scan a web app you own and get a remediation report.")
@@ -277,7 +277,8 @@ def _write_report(result, path: Path) -> None:
 
 @app.command()
 def scan(
-    url: str = typer.Argument(..., help="URL of the app to scan (your own / authorized)."),
+    url: str = typer.Argument(None, help="URL of the app to scan (your own / authorized). Omit + use --pick to choose from your scope."),
+    pick: bool = typer.Option(False, "--pick", help="Pick the target from your authorized scope instead of typing a URL."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run; make no requests."),
     report: Path = typer.Option(None, "--report", "-o",
                                 help="Write a report; format follows the extension (.html/.pdf/.md/.json)."),
@@ -289,6 +290,15 @@ def scan(
     no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
 ):
     """Run bounded, read-only defensive checks against URL (+ optional Docker tools)."""
+    if pick or (not url and not json_out):
+        from . import clients
+        chosen = clients.pick_target(console)   # authorized, in-scope target (or None)
+        if not chosen:
+            raise typer.Exit()
+        url = chosen
+    if not url:
+        console.print("[#f87171]No target — pass a URL or use --pick to choose from your scope.[/]")
+        raise typer.Exit(1)
     tool_names = _resolve_tools(deep, with_tools)
     if not json_out:
         _banner(animate=not no_anim and not dry_run)
@@ -560,6 +570,7 @@ _COMMANDS = [
     ("temple-guard scan <url> --tools nmap,nikto", "run specific Docker tools"),
     ("temple-guard scan <url> --dry-run", "list the checks, send nothing"),
     ("temple-guard scan <url> -o report.html", "save a report (.html / .pdf / .md / .json)"),
+    ("temple-guard scan --pick", "pick the target from your authorized scope"),
     ("temple-guard monitor", "live dashboard — run several scans at once ('n' add · Esc leave)"),
     ("temple-guard monitor <urls…> --deep", "preload targets + the Docker recon set"),
     ("temple-guard monitor <urls…> --tools nmap", "preload specific Docker tools"),
@@ -569,6 +580,10 @@ _COMMANDS = [
     ("temple-guard tool nmap <args>", "run a Kali tool with your own flags (full arg set)"),
     ("temple-guard tool nmap --dry-run", "preview the docker command for a tool; run nothing"),
     ("temple-guard tool nmap -h", "the tool's own help / full options"),
+    ("temple-guard osint <target>", "OSINT / HUMINT footprint — domain · name · email · phone"),
+    ("temple-guard apitest <url>", "discover API endpoints + bounded posture checks"),
+    ("temple-guard client", "manage clients · engagements · authorized scope"),
+    ("temple-guard scope list", "list every authorized in-scope target"),
     ("temple-guard shell", "interactive Kali shell in a container"),
     ("temple-guard shell --dry-run", "preview the shell container command; start nothing"),
     ("temple-guard doctor", "check Docker + which tool images are present"),
@@ -595,8 +610,15 @@ def _print_commands() -> None:
 def _scan_flow(deep: bool = False, dry: bool = False) -> None:
     """Prompt for a target + options, run the scan (+ Docker tools if deep), offer to save.
     In dry mode: print the checks + tool commands that would run, and run nothing."""
-    url = Prompt.ask(f"[{BLUE}]Target URL[/] "
-                     f"[dim](e.g. https://beta.example.com — blank = back)[/]").strip()
+    from . import clients
+    url = ""
+    if clients.all_targets():
+        console.print(Text.assemble(("  Tip: ", f"bold {BLUE}"),
+                      ("pick from your authorized scope, or choose Back to type a URL.", "dim")))
+        url = clients.pick_target(console) or ""
+    if not url:
+        url = Prompt.ask(f"[{BLUE}]Target URL[/] "
+                         f"[dim](e.g. https://beta.example.com — blank = back)[/]").strip()
     if not url:
         console.print("[dim]No target — back to the menu.[/]")
         return
@@ -961,6 +983,254 @@ def doctor(pull: bool = typer.Option(False, "--pull", help="Pull any missing Doc
     _doctor(pull=pull)
 
 
+# ── OSINT / HUMINT ────────────────────────────────────────────────────────────
+def _run_osint(target: str, which: list, json_out: bool):
+    """Run the chosen OSINT tools against a raw target and collect findings into a ScanResult."""
+    from .checks import ScanResult
+    res = ScanResult(url=target, reachable=True)
+    for key in which:
+        if not json_out:
+            console.print(Text.assemble(("● ", f"bold {PURPLE}"), (f"{key}", "bold white"), ("  …", "dim")))
+        try:
+            findings, _raw, _ok = tools.recon_tools.run_recon(key, target)
+        except Exception as exc:  # noqa: BLE001
+            msg = f"{key} error — {str(exc)[:70]}"
+            print(msg, file=sys.stderr) if json_out else console.print(f"[#f87171]  {msg}[/]")
+            continue
+        res.findings.extend(findings)
+        if not json_out:
+            for f in findings:
+                console.print(Text.assemble((f"    {f.severity.upper():4} ", SEV_STYLE.get(f.severity, "dim")),
+                                            (f.title[:72], "white")))
+    return res
+
+
+@app.command("osint")
+def osint_cmd(
+    target: str = typer.Argument(..., help="Domain, name, email, or phone number — yours / authorized."),
+    with_tools: str = typer.Option(None, "--tools",
+                                   help="OSINT tools to run (comma list). Default: theharvester,subfinder,spiderfoot "
+                                        "for a domain/name; phoneinfoga for a phone."),
+    report: Path = typer.Option(None, "--report", "-o", help="Write a report (.html/.pdf/.md/.json)."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable findings."),
+    no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
+):
+    """OSINT / HUMINT footprint of a domain, person, email, or phone — passive, read-only public-source recon.
+
+    temple-guard osint example.com
+    temple-guard osint "Jane Doe" --tools spiderfoot
+    temple-guard osint +14155552671            # phone → phoneinfoga
+    """
+    from . import recon_tools
+    ok, why = tools.docker_available()
+    if not ok:
+        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
+        raise typer.Exit(1)
+    is_phone = bool(re.fullmatch(r"\+?[0-9][0-9\s().-]{6,}", target.strip()))
+    default = ["phoneinfoga"] if is_phone else ["theharvester", "subfinder", "spiderfoot"]
+    which = default
+    if with_tools:
+        picked = [t.strip() for t in with_tools.replace(",", " ").split() if t.strip()]
+        which = [t for t in picked if t in recon_tools.OSINT] or default
+    if not json_out:
+        _banner(animate=not no_anim)
+        _authz_notice()
+        console.print(Text.assemble(("\nOSINT ", f"bold {PURPLE}"), (target, "bold white"),
+                                    (f"   ·   {', '.join(which)}", "dim")))
+        amd = [t for t in which if t in getattr(recon_tools, "AMD64_ONLY", [])]
+        if amd:
+            console.print(Text(f"  ({', '.join(amd)} are amd64-only — slower under emulation on Apple Silicon)", style="dim"))
+    res = _run_osint(target, which, json_out)
+    if json_out:
+        print(json.dumps(_result_dict(res), indent=2))
+        raise typer.Exit(code=1 if res.by_severity.get("high") else 0)
+    console.print()
+    render(res, console)
+    if report:
+        _write_report(res, report)
+    raise typer.Exit(code=1 if res.by_severity.get("high") else 0)
+
+
+# ── API testing ───────────────────────────────────────────────────────────────
+@app.command("apitest")
+def apitest_cmd(
+    url: str = typer.Argument(..., help="Base URL of the API to test — yours / authorized."),
+    report: Path = typer.Option(None, "--report", "-o", help="Write a report (.html/.pdf/.md/.json)."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Stream discovery + each finding live."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable findings."),
+    no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
+):
+    """Discover an API's endpoints (OpenAPI/Swagger or probing) + run bounded, read-only posture checks."""
+    from .apitest import run_api_test
+    if not json_out:
+        _banner(animate=not no_anim)
+        _authz_notice()
+        console.print()
+    printer = make_progress_reporter(console) if (verbose and not json_out) else None
+    result = run_api_test(url, on_event=printer)
+    if json_out:
+        d = _result_dict(result)
+        d["endpoints"] = getattr(result, "endpoints", [])
+        print(json.dumps(d, indent=2))
+        raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+    n = len(getattr(result, "endpoints", []))
+    console.print(Text.assemble(("Discovered ", "dim"), (f"{n} endpoint(s)", f"bold {BLUE}"),
+                                ("  ·  testing a bounded subset", "dim")))
+    render(result, console)
+    if report:
+        _write_report(result, report)
+    raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+
+
+# ── clients / engagements / authorized scope ──────────────────────────────────
+client_app = typer.Typer(add_completion=False, no_args_is_help=False,
+                         help="Manage clients, engagements & authorized scope.")
+app.add_typer(client_app, name="client")
+
+
+@client_app.callback(invoke_without_command=True)
+def _client_default(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:      # bare `client` → interactive manager
+        from . import clients
+        clients.manage(console)
+
+
+@client_app.command("list")
+def client_list():
+    """Show the clients → engagements → scope tree."""
+    from . import clients
+    clients.overview(console)
+
+
+@client_app.command("add")
+def client_add(name: str = typer.Argument(..., help="Client name."),
+               notes: str = typer.Option("", "--notes", help="Free-text notes.")):
+    """Add a client."""
+    from . import clients
+    c = clients.add_client(name, notes=notes)
+    console.print(Text.assemble(("✓ client ", f"bold {BLUE}"), (c.name, "bold white"), (f"  [{c.slug}]", "dim")))
+
+
+@client_app.command("engagement")
+def client_engagement(
+    client: str = typer.Argument(..., help="Client slug or name."),
+    name: str = typer.Argument(..., help="Engagement name."),
+    scope: str = typer.Option(None, "--scope", help="Authorized target(s), space/comma separated."),
+    authorize: bool = typer.Option(False, "--authorize",
+                                   help="Mark authorized — only then are its targets scannable."),
+    roe: str = typer.Option("", "--roe", help="Rules-of-engagement note."),
+):
+    """Add an engagement (with optional scope + authorization) under a client."""
+    from . import clients
+    try:
+        sc = [s.strip() for s in scope.replace(",", " ").split() if s.strip()] if scope else []
+        e = clients.add_engagement(client, name, scope=sc, authorized=authorize, roe=roe)
+    except ValueError as exc:
+        console.print(f"[#f87171]✗ {exc}[/]")
+        raise typer.Exit(1)
+    console.print(Text.assemble(("✓ engagement ", f"bold {BLUE}"), (e.name, "bold white"),
+                                (f"  [{e.slug}]  scope={len(e.scope)}  "
+                                 f"{'authorized' if e.authorized else 'NOT authorized'}", "dim")))
+
+
+scope_app = typer.Typer(add_completion=False, no_args_is_help=False,
+                        help="View & manage authorized scope targets.")
+app.add_typer(scope_app, name="scope")
+
+
+@scope_app.command("list")
+def scope_list():
+    """List every authorized in-scope target."""
+    from . import clients
+    ts = clients.all_targets()
+    if not ts:
+        console.print("[dim]No authorized scope targets yet — add a client + engagement: "
+                      "temple-guard client[/]")
+        return
+    for t in ts:
+        console.print(Text.assemble(("  ● ", "#4ade80"), (t.target, "bold white"), (f"   {t.label}", "dim")))
+
+
+@scope_app.command("add")
+def scope_add(client: str = typer.Argument(..., help="Client slug or name."),
+              engagement: str = typer.Argument(..., help="Engagement slug or name."),
+              targets: list[str] = typer.Argument(..., help="Target(s) to add to the scope.")):
+    """Add target(s) to an engagement's scope."""
+    from . import clients
+    try:
+        e = clients.add_targets(client, engagement, list(targets))
+    except ValueError as exc:
+        console.print(f"[#f87171]✗ {exc}[/]  [dim](create it first: temple-guard client engagement …)[/]")
+        raise typer.Exit(1)
+    console.print(f"[green]✓ scope now {len(e.scope)} target(s) for {engagement}[/]")
+
+
+@scope_app.command("authorize")
+def scope_authorize(client: str = typer.Argument(...), engagement: str = typer.Argument(...),
+                    revoke: bool = typer.Option(False, "--revoke", help="Revoke authorization instead.")):
+    """Mark an engagement authorized (only then are its targets scannable) — or --revoke."""
+    from . import clients
+    try:
+        clients.set_authorized(client, engagement, not revoke)
+    except ValueError as exc:
+        console.print(f"[#f87171]✗ {exc}[/]")
+        raise typer.Exit(1)
+    console.print(f"[green]✓ {engagement} {'revoked' if revoke else 'authorized'}[/]")
+
+
+def _osint_flow(dry: bool = False) -> None:
+    """Menu flow: OSINT / HUMINT footprint of a domain, name, email, or phone (passive, read-only)."""
+    target = Prompt.ask(f"[{PURPLE}]OSINT target[/] "
+                        f"[dim](domain · name · email · phone — blank = back)[/]").strip()
+    if not target:
+        console.print("[dim]No target — back to the menu.[/]")
+        return
+    from . import recon_tools
+    is_phone = bool(re.fullmatch(r"\+?[0-9][0-9\s().-]{6,}", target))
+    which = ["phoneinfoga"] if is_phone else ["theharvester", "subfinder", "spiderfoot"]
+    if dry:
+        console.print(Text.assemble(("\nWould run OSINT tools ", "dim"), (", ".join(which), f"bold {BLUE}"),
+                                    (f" against {target} — nothing sent.", "dim")))
+        return
+    ok, why = tools.docker_available()
+    if not ok:
+        console.print(Text.assemble(("✗ Docker unavailable: ", "bold #f87171"), (why, "dim")))
+        console.print(Text.assemble(("  → ", f"bold {BLUE}"), (tools.docker_hint(), "dim")))
+        return
+    if not Confirm.ask("[#fbbf24]I'm authorized to research this target. Run OSINT?[/]", default=True):
+        console.print("[dim]Cancelled — nothing was sent.[/]")
+        return
+    console.print()
+    res = _run_osint(target, which, json_out=False)
+    console.print()
+    render(res, console)
+
+
+def _apitest_flow(dry: bool = False) -> None:
+    """Menu flow: discover an API's endpoints + run bounded, read-only posture checks."""
+    raw = Prompt.ask(f"[{BLUE}]API base URL[/] "
+                     f"[dim](e.g. https://api.example.com — blank = back)[/]").strip()
+    if not raw:
+        console.print("[dim]No target — back to the menu.[/]")
+        return
+    url = _norm_target(raw, "url")
+    if dry:
+        console.print(Text.assemble(("\nWould discover endpoints + run bounded read-only checks against ", "dim"),
+                                    (url, f"bold {BLUE}"), (" — nothing sent yet.", "dim")))
+        return
+    if not Confirm.ask("[#fbbf24]I'm authorized to test this API. Go?[/]", default=True):
+        console.print("[dim]Cancelled — nothing was sent.[/]")
+        return
+    from .apitest import run_api_test
+    console.print()
+    result = run_api_test(url, on_event=make_progress_reporter(console))
+    n = len(getattr(result, "endpoints", []))
+    console.print(Text.assemble(("Discovered ", "dim"), (f"{n} endpoint(s)", f"bold {BLUE}"),
+                                ("  ·  tested a bounded subset", "dim")))
+    render(result, console)
+
+
 @app.command()
 def interactive() -> None:
     """Interactive, colourful menu — fuzzy-pick what to run. Esc = back · Ctrl+C = quit."""
@@ -981,6 +1251,9 @@ def interactive() -> None:
                 ("m", "Monitor", "live dashboard — run several scans at once"),
                 ("3", "Run a tool", "one Kali tool with your own arguments"),
                 ("4", "Kali shell", "interactive shell in a Kali container"),
+                ("o", "OSINT / HUMINT", "passive footprint — domain · name · email · phone"),
+                ("a", "API testing", "discover endpoints + bounded posture checks"),
+                ("c", "Clients & scope", "manage clients, engagements & authorized targets"),
                 ("p", "Doctor", "check Docker & pre-pull the tool images"),
                 ("5", "What it checks", "list the checks temple-guard runs"),
                 ("6", "Help", "commands & flags"),
@@ -1007,6 +1280,13 @@ def interactive() -> None:
                 _tool_flow(dry=dry)
             elif choice == "4":
                 _shell_flow(dry=dry)
+            elif choice == "o":
+                _osint_flow(dry=dry)
+            elif choice == "a":
+                _apitest_flow(dry=dry)
+            elif choice == "c":
+                from . import clients
+                clients.manage(console)
             elif choice == "p":
                 _doctor()
             elif choice == "5":
