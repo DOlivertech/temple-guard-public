@@ -5,6 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.7.0] — 2026-07-17
+### Added
+- **OSINT / HUMINT footprint** — `temple-guard osint <domain · name · email · phone>` runs passive,
+  read-only public-source recon (theHarvester, subfinder, SpiderFoot, PhoneInfoga). Also a menu item
+  and a monitor profile.
+- **API testing** — `temple-guard apitest <url>` discovers an API's endpoints (OpenAPI/Swagger or
+  common-path probing) and runs bounded, read-only posture checks. `--spec <url>` points at a spec on
+  a non-standard path, `--endpoints /a,/b` tests routes you already know, and `-v` streams the full
+  discovery log (every path tried + its status). When nothing is discovered it now explains why
+  (404-vs-401) and how to point it at the right place, instead of a bare empty result.
+- **Clients & authorized scope** — `temple-guard client` / `scope` register clients → engagements →
+  an authorized scope (stored under `~/.temple-guard/clients`). Scoped targets are pickable in
+  `scan --pick`, `playbook`, `pentest`, and the monitor's add-target.
+- **Playbooks** — `temple-guard playbook list` / `run <id> <url>` chain ordered, defensive recipes
+  (recon → web → TLS, OSINT footprint, …) into one merged report.
+- **Pentest** — `temple-guard pentest [targets…]` picks any combination of bounded tests across one
+  or more targets and produces one combined report (`--tests`, `--pick`, `--report`).
+- **Live progress for Docker-backed commands** — `osint` / `playbook` / `pentest` show a spinner +
+  elapsed clock per tool, with a distinct "pulling image" phase on first run, so a slow tool never
+  looks hung.
+### Changed
+- **Monitor add-target is task-first.** Press **`n`** and pick *what* to run — Native · Deep · Pick
+  tools · **OSINT/HUMINT** · **API testing** — before typing the target, and pick a target from your
+  authorized scope. New task kinds run recon tools / apitest and merge into the live counters + report.
+- **Interactive menu** — items are grouped by category (Scan · Recon · Tools · Manage · …), aligned
+  into columns, and coloured, so the menu is far less cluttered.
+- **`scan --pick`** chooses the target from your authorized scope instead of typing a URL.
+
 ## [0.6.1] — 2026-07-17
 ### Changed
 - **Monitor: manage targets from inside the dashboard.** Launching **Monitor** from the menu
