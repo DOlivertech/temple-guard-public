@@ -669,12 +669,16 @@ TOOL_GUIDE = {
         "base": ["-Pn"],
         "target": {"prompt": "Target host", "eg": "beta.example.com or localhost", "kind": "host", "arg": ["{}"]},
         "steps": [
-            {"ask": "Detection", "choices": [
-                ("service + version (-sV)", ["-sV"]), ("aggressive: OS + default scripts (-A)", ["-A"])]},
+            {"ask": "Scan options — pick any (all safe & read-only)", "multi": [
+                ("-sV   service + version detection", ["-sV"]),
+                ("-sC   default safe NSE scripts", ["-sC"]),
+                ("-O    OS detection", ["-O"]),
+                ("--reason  show why each port's state was decided", ["--reason"]),
+                ("-T4   faster timing", ["-T4"]),
+                ("-v    verbose", ["-v"])]},
             {"ask": "Ports", "choices": [
                 ("top 200 — default", ["--top-ports", "200"]), ("top 1000", ["--top-ports", "1000"]),
                 ("range 1-1000", ["-p", "1-1000"]), ("all 65535 (slow)", ["-p-"])]},
-            {"ask": "Faster timing (-T4)?", "flag": ["-T4"], "default": True},
         ],
     },
     "testssl": {
@@ -723,6 +727,37 @@ def _ask_choice(prompt: str, choices: list):
     console.print(Text("  b  ← back", style="dim"))
     idx = Prompt.ask("Pick", choices=[str(i) for i in range(1, len(choices) + 1)] + ["b"], default="1")
     return None if idx == "b" else choices[int(idx) - 1][1]
+
+
+def _ask_multi(prompt: str, choices: list) -> list:
+    """MULTI-select from (label, tokens) pairs — pick any combination. Returns the concatenated
+    tokens of everything selected (empty if none). Fuzzy checkbox when available, else a
+    comma-separated numbered prompt."""
+    if sys.stdin.isatty() and console.is_terminal and not os.environ.get("TG_NO_FUZZY"):
+        try:
+            from InquirerPy import inquirer
+            from InquirerPy.base.control import Choice
+            picked = inquirer.checkbox(
+                message=prompt,
+                choices=[Choice(value=i, name=lbl) for i, (lbl, _t) in enumerate(choices)],
+                instruction="(space toggles · ↑↓ move · enter confirms · none = skip)",
+                border=True, cycle=True, qmark="›", amark="›",
+            ).execute()
+            out: list = []
+            for i in (picked or []):
+                out += choices[i][1]
+            return out
+        except Exception:  # noqa: BLE001 — no fuzzy TTY → numbered fallback
+            pass
+    console.print(Text(f"\n{prompt}", style=f"bold {BLUE}"))
+    for i, (label, _tokens) in enumerate(choices, 1):
+        console.print(Text.assemble((f"  {i}  ", f"bold {BLUE}"), (label, "white")))
+    raw = Prompt.ask("Pick [dim](comma-separated numbers, or blank for none)[/]", default="").strip()
+    out = []
+    for tok in raw.replace(",", " ").split():
+        if tok.isdigit() and 1 <= int(tok) <= len(choices):
+            out += choices[int(tok) - 1][1]
+    return out
 
 
 def _norm_target(val: str, kind: str) -> str:
@@ -777,6 +812,8 @@ def _guided_tool_args(name: str):
             if toks is None:        # 'b' → back out of the guided flow
                 return None
             argv += toks
+        elif "multi" in step:       # multi-select — pick any combination of safe flags
+            argv += _ask_multi(step["ask"], step["multi"])
         elif Confirm.ask(step["ask"], default=step.get("default", False)):
             argv += step["flag"]
     extra = Prompt.ask("[dim]Extra flags (optional — blank for none)[/]", default="").strip()
