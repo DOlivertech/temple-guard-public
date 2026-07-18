@@ -480,9 +480,12 @@ that image (as Metasploit does). High-value tools **not yet wired**, by category
 
 ## Ethical boundaries — what Temple Guard won't ship
 
-This platform is for **authorized** testing. The following are intentionally
-**kept out of scope** — they're represented as documented + simulated
-operations with hardening guidance. If your engagement authorizes them, keep them documented and simulated only:
+Temple Guard is built for **authorized** security testing, and it draws a hard line
+at capabilities whose primary purpose is to cause harm. The categories below are
+**deliberately out of scope**: where they appear at all, they exist only as
+**documented, simulated operations** with hardening guidance — so defenders can
+understand the technique and how to mitigate it — and **never as turnkey tooling that
+runs the real thing**. This is a permanent design choice, not a gap to be filled in:
 
 - **Weaponized DoS** — volumetric (L3/L4) or application-layer (L7) flooders that
   saturate/exhaust a target. (The built-in resilience probe is hard-capped to
@@ -499,9 +502,9 @@ operations with hardening guidance. If your engagement authorizes them, keep the
 - **Destructive actions** on real systems (data deletion, defacement, lockout).
 - Anything targeting hosts **outside an authorized engagement's scope**.
 
-Everything else — recon, vuln scanning, web/app auditing, config/posture review,
-bounded resilience checks, and the full reporting/hardening workflow — is fair
-game and is what the platform is built to automate.
+What Temple Guard **does** automate is the defensive core: recon, vulnerability
+scanning, web/app auditing, configuration and posture review, bounded resilience
+checks, and the full reporting-and-hardening workflow.
 
 ---
 
