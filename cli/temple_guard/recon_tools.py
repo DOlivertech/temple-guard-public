@@ -528,7 +528,7 @@ RECON_TOOLS: dict[str, Tool] = {
              "subdomains, hosts and IPs for a DOMAIN from search engines, certificate "
              "transparency, and passive-DNS sources — the attacker's first look at you.",
         usage="temple-guard osint theharvester example.com\n"
-              "temple-guard osint theharvester racecontrol.dev",
+              "temple-guard osint theharvester example.com",
         risk="Passive/read-only — it queries third-party OSINT sources, not your target "
              "directly. Only assess domains you own or are authorized to. No API keys needed "
              "for the bundled source set.",
@@ -546,7 +546,7 @@ RECON_TOOLS: dict[str, Tool] = {
              "This ships a keyless module (hackertarget → hosts). Add API keys for Shodan, "
              "Censys, Hunter, etc. to unlock its deeper modules.",
         usage="temple-guard osint reconng example.com\n"
-              "temple-guard osint reconng racecontrol.dev",
+              "temple-guard osint reconng example.com",
         risk="Light/passive with the keyless module. amd64-only image (emulated on Apple "
              "Silicon). Only recon domains you're authorized to. Most modules need API keys.",
         flags="-m <module>  ·  -o name=value (module opt, e.g. SOURCE=domain)  ·  -x (execute)  "
@@ -594,7 +594,7 @@ RECON_TOOLS: dict[str, Tool] = {
              "public sources (CT logs, passive DNS, search APIs). The quickest way to see your "
              "external DNS attack surface.",
         usage="temple-guard osint subfinder example.com\n"
-              "temple-guard osint subfinder racecontrol.dev",
+              "temple-guard osint subfinder example.com",
         risk="Passive — queries public sources, never brute-forces the target. Some sources "
              "yield more with (optional) free API keys in a provider config. Authorized "
              "domains only.",
@@ -610,7 +610,7 @@ RECON_TOOLS: dict[str, Tool] = {
              "supported protocols and cipher suites, inspects the certificate chain, and tests "
              "for Heartbleed, ROBOT, CCS-injection, insecure renegotiation, and compression.",
         usage="temple-guard recon sslyze example.com\n"
-              "temple-guard recon sslyze beta.racecontrol.dev:443",
+              "temple-guard recon sslyze example.com:443",
         risk="Read-only handshakes, but many of them — point it only at hosts you own. Needs a "
              "TLS port (defaults to 443); pointing it at a plain-HTTP port just fails to handshake.",
         flags="--tlsv1_2/--tlsv1_3/--sslv3… (per-protocol)  ·  --certinfo  ·  --heartbleed  ·  "
