@@ -584,6 +584,10 @@ _COMMANDS = [
     ("temple-guard apitest <url>", "discover API endpoints + bounded posture checks"),
     ("temple-guard client", "manage clients · engagements · authorized scope"),
     ("temple-guard scope list", "list every authorized in-scope target"),
+    ("temple-guard playbook list", "list the ordered scan recipes"),
+    ("temple-guard playbook run web-audit <url>", "run a playbook end-to-end → one report"),
+    ("temple-guard pentest <url> --tests native,nmap,nuclei", "run selected tests against a target"),
+    ("temple-guard pentest --pick", "pick tests + scoped target(s) → combined report"),
     ("temple-guard shell", "interactive Kali shell in a container"),
     ("temple-guard shell --dry-run", "preview the shell container command; start nothing"),
     ("temple-guard doctor", "check Docker + which tool images are present"),
@@ -1179,6 +1183,257 @@ def scope_authorize(client: str = typer.Argument(...), engagement: str = typer.A
     console.print(f"[green]✓ {engagement} {'revoked' if revoke else 'authorized'}[/]")
 
 
+# ── playbooks — ordered, defensive multi-step scans ───────────────────────────
+playbook_app = typer.Typer(add_completion=False, no_args_is_help=True,
+                           help="Ordered, defensive multi-step scan recipes (recon → web → TLS …).")
+app.add_typer(playbook_app, name="playbook")
+
+
+@playbook_app.command("list")
+def playbook_list():
+    """List the playbooks and the steps each one chains, in order."""
+    from . import playbooks
+    console.print(Text("\nPlaybooks — ordered, read-only scan recipes:", style=f"bold {PURPLE}"))
+    for pb in playbooks.CATALOG:
+        console.print(Text.assemble(("  ● ", f"{BLUE}"), (pb.id.ljust(16), "bold white"), (pb.name, "white")))
+        console.print(Text.assemble(("      ", ""), (pb.summary, "dim")))
+    console.print(Text.assemble(("\n  Run one:  ", "dim"),
+                                ("temple-guard playbook run <id> <url>", f"bold {BLUE}"),
+                                ("   (or --pick a scoped target)", "dim")))
+
+
+@playbook_app.command("run")
+def playbook_run(
+    playbook_id: str = typer.Argument(..., help="Playbook id — see `playbook list`."),
+    url: str = typer.Argument(None, help="Target (your own / authorized). Omit + --pick to choose from scope."),
+    pick: bool = typer.Option(False, "--pick", help="Pick the target from your authorized scope."),
+    report: Path = typer.Option(None, "--report", "-o", help="Write a report (.html/.pdf/.md/.json)."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Stream each step + finding live."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable findings."),
+    no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
+):
+    """Run a playbook end-to-end against a target and print / save one merged report."""
+    from . import playbooks
+    pb = playbooks.get(playbook_id)
+    if pb is None:
+        console.print(Text.assemble(("✗ no such playbook: ", "bold #f87171"), (playbook_id, "white"),
+                                    ("   (try `temple-guard playbook list`)", "dim")))
+        raise typer.Exit(1)
+    if pick or (not url and not json_out):
+        from . import clients
+        chosen = clients.pick_target(console)
+        if not chosen:
+            raise typer.Exit()
+        url = chosen
+    if not url:
+        console.print("[#f87171]No target — pass one or use --pick to choose from your scope.[/]")
+        raise typer.Exit(1)
+    if not json_out:
+        _banner(animate=not no_anim)
+        _authz_notice()
+        console.print(Text.assemble(("\n▶ ", f"bold {PURPLE}"), (pb.name, "bold white"), (f"   {pb.summary}", "dim")))
+        console.print()
+    printer = make_progress_reporter(console) if (verbose and not json_out) else None
+    result = playbooks.run_playbook(pb, url, on_event=printer)
+    if json_out:
+        print(json.dumps(_result_dict(result), indent=2))
+        raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+    render(result, console)
+    if report:
+        _write_report(result, report)
+    raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+
+
+def _playbook_flow(dry: bool = False) -> None:
+    """Menu flow: pick a playbook + target, run the chain, show one merged report."""
+    from . import playbooks, clients
+    items = [(pb.id, pb.name, pb.summary) for pb in playbooks.CATALOG]
+    items.append(("__back__", "← Back", ""))
+    pid = _pick("Which playbook?", items, default=playbooks.CATALOG[0].id)
+    if not pid or pid == "__back__":
+        return
+    pb = playbooks.get(pid)
+    url = ""
+    if clients.all_targets():
+        console.print(Text.assemble(("  Tip: ", f"bold {BLUE}"),
+                      ("pick from your authorized scope, or choose Back to type a target.", "dim")))
+        url = clients.pick_target(console) or ""
+    if not url:
+        url = Prompt.ask(f"[{BLUE}]Target[/] [dim](domain or URL — blank = back)[/]").strip()
+    if not url:
+        console.print("[dim]No target — back to the menu.[/]")
+        return
+    if dry:
+        console.print(Text.assemble(("\nWould run ", "dim"), (pb.name, f"bold {BLUE}"),
+                                    (f" → {pb.summary}  against {url} — nothing sent.", "dim")))
+        return
+    if not Confirm.ask("[#fbbf24]I'm authorized to test this target. Run the playbook?[/]", default=True):
+        console.print("[dim]Cancelled — nothing was sent.[/]")
+        return
+    console.print()
+    result = playbooks.run_playbook(pb, url, on_event=make_progress_reporter(console))
+    console.print()
+    render(result, console)
+
+
+# ── pentest — selectable tests across one or more targets → one combined report ─
+_PENTEST_TESTS = [
+    ("native",       "native", "built-in read-only checks (TLS · headers · cookies · info-leak · methods · SPF/DMARC)"),
+    ("whatweb",      "tool",   "technology fingerprint"),
+    ("wafw00f",      "tool",   "WAF / proxy detection"),
+    ("nmap",         "tool",   "service / version discovery"),
+    ("nuclei",       "tool",   "templated known-issue checks"),
+    ("nikto",        "tool",   "web-server misconfiguration scan"),
+    ("testssl",      "tool",   "TLS / cipher audit"),
+    ("sslyze",       "recon",  "TLS protocol & cipher enumeration"),
+    ("theharvester", "recon",  "emails / hosts / subdomains (OSINT)"),
+    ("subfinder",    "recon",  "passive subdomain enumeration"),
+    ("spiderfoot",   "recon",  "multi-source OSINT sweep"),
+]
+_PENTEST_KIND = {k: knd for k, knd, _l in _PENTEST_TESTS}
+_PENTEST_ORDER = {k: i for i, (k, _knd, _l) in enumerate(_PENTEST_TESTS)}
+
+
+def _pentest_steps(selected: list):
+    """Turn selected test keys into ordered playbook steps (native → scan tools → recon)."""
+    from . import playbooks
+    steps = []
+    for key in sorted(dict.fromkeys(selected), key=lambda k: _PENTEST_ORDER.get(k, 99)):
+        knd = _PENTEST_KIND.get(key)
+        if knd == "native":
+            steps.append(playbooks.PlaybookStep("native"))
+        elif knd in ("tool", "recon"):
+            steps.append(playbooks.PlaybookStep(knd, key))
+    return steps
+
+
+def _write_combined(results: list, path: Path) -> None:
+    """Write ONE report across every target's result — multi for html/md/json; single-target pdf supported."""
+    from .report import to_html_multi, to_markdown_multi
+    ext = path.suffix.lower()
+    if ext == ".pdf" and len(results) == 1:
+        _write_report(results[0], path)
+        return
+    if ext in (".html", ".htm"):
+        path.write_text(to_html_multi(results, title="temple-guard — pentest report"))
+        kind = "HTML"
+    elif ext == ".json":
+        path.write_text(json.dumps([_result_dict(r) for r in results], indent=2))
+        kind = "JSON"
+    else:
+        path.write_text(to_markdown_multi(results, title="temple-guard — pentest report"))
+        kind = "markdown"
+    console.print(Text.assemble((f"\n✓ combined {kind} report ({len(results)} target(s)) → ", f"{BLUE}"),
+                                (str(path), "bold white")))
+
+
+@app.command()
+def pentest(
+    targets: list[str] = typer.Argument(None, help="Target(s) — your own / authorized. Omit + --pick to choose from scope."),
+    tests: str = typer.Option(None, "--tests",
+                              help="Comma-list: native,whatweb,wafw00f,nmap,nuclei,nikto,testssl,sslyze,"
+                                   "theharvester,subfinder,spiderfoot. Interactive picker if omitted."),
+    pick: bool = typer.Option(False, "--pick", help="Pick target(s) from your authorized scope."),
+    report: Path = typer.Option(None, "--report", "-o",
+                                help="Write ONE combined report (.html/.md/.json; .pdf for a single target)."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Stream each test + finding live."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable findings (a list, one entry per target)."),
+    no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
+):
+    """Run selectable, bounded tests against one or more targets → ONE combined report.
+
+    temple-guard pentest https://app.example.com --tests native,nmap,nuclei
+    temple-guard pentest --pick --tests native,testssl        # choose scoped targets
+    temple-guard pentest                                       # fully interactive
+    """
+    from . import playbooks
+    tlist = [t for t in (targets or []) if t]
+    if pick or (not tlist and not json_out):
+        from . import clients
+        scoped = clients.all_targets()
+        if scoped:
+            tlist.extend(_ask_multi("Which target(s) from your authorized scope?",
+                                    [(f"{st.target}   {st.label}", [st.target]) for st in scoped]))
+        elif not tlist:
+            console.print(Text.assemble(("No authorized scope targets. ", "bold #fbbf24"),
+                          ("Add a client + engagement, or pass target URLs directly.", "dim")))
+    tlist = list(dict.fromkeys(tlist))
+    if not tlist:
+        console.print("[#f87171]No targets — pass URL(s) or use --pick to choose from your scope.[/]")
+        raise typer.Exit(1)
+
+    valid = {k for k, _knd, _l in _PENTEST_TESTS}
+    if tests:
+        selected = [t for t in tests.replace(",", " ").split() if t in valid] or ["native"]
+    elif json_out:
+        selected = ["native"]
+    else:
+        console.print(Text("\nSelect the tests to run (all bounded & read-only):", style=f"bold {PURPLE}"))
+        for k, _knd, lbl in _PENTEST_TESTS:
+            console.print(Text.assemble(("  · ", f"{BLUE}"), (k.ljust(13), "bold white"), (lbl, "dim")))
+        selected = _ask_multi("Which tests?", [(f"{k} — {lbl}", [k]) for k, _knd, lbl in _PENTEST_TESTS]) or ["native"]
+
+    steps = _pentest_steps(selected)
+    pb = playbooks.Playbook("pentest", "Pentest", "operator-selected tests", "custom", steps)
+    if not json_out:
+        _banner(animate=not no_anim)
+        _authz_notice()
+        console.print(Text.assemble(("\n▶ Pentest  ", f"bold {PURPLE}"),
+                                    (f"{len(tlist)} target(s) × {len(steps)} test(s)", "bold white"),
+                                    (f"   {pb.summary}", "dim")))
+    printer = make_progress_reporter(console) if (verbose and not json_out) else None
+    results = []
+    for tgt in tlist:
+        if not json_out:
+            console.print(Text.assemble(("\n── ", "dim"), (tgt, f"bold {BLUE}"), (" ──", "dim")))
+        results.append(playbooks.run_playbook(pb, tgt, on_event=printer))
+    if json_out:
+        print(json.dumps([_result_dict(r) for r in results], indent=2))
+        raise typer.Exit(code=1 if any(r.by_severity.get("high") for r in results) else 0)
+    console.print()
+    for r in results:
+        render(r, console)
+    if report:
+        _write_combined(results, report)
+    raise typer.Exit(code=1 if any(r.by_severity.get("high") for r in results) else 0)
+
+
+def _pentest_flow(dry: bool = False) -> None:
+    """Menu flow: pick tests + target(s) from scope/typed, run them, show a combined report."""
+    from . import playbooks, clients
+    tlist = []
+    if clients.all_targets():
+        tlist.extend(_ask_multi("Target(s) from your scope  (pick none to type one instead)",
+                                [(f"{st.target}   {st.label}", [st.target]) for st in clients.all_targets()]))
+    if not tlist:
+        raw = Prompt.ask(f"[{BLUE}]Target(s)[/] [dim](space/comma separated — blank = back)[/]").strip()
+        tlist = [t for t in raw.replace(",", " ").split() if t]
+    if not tlist:
+        console.print("[dim]No targets — back to the menu.[/]")
+        return
+    console.print(Text("\nSelect the tests to run (all bounded & read-only):", style=f"bold {PURPLE}"))
+    for k, _knd, lbl in _PENTEST_TESTS:
+        console.print(Text.assemble(("  · ", f"{BLUE}"), (k.ljust(13), "bold white"), (lbl, "dim")))
+    selected = _ask_multi("Which tests?", [(f"{k} — {lbl}", [k]) for k, _knd, lbl in _PENTEST_TESTS]) or ["native"]
+    steps = _pentest_steps(selected)
+    pb = playbooks.Playbook("pentest", "Pentest", "operator-selected tests", "custom", steps)
+    if dry:
+        console.print(Text.assemble(("\nWould run ", "dim"), (pb.summary, f"bold {BLUE}"),
+                                    (f"  against {', '.join(tlist)} — nothing sent.", "dim")))
+        return
+    if not Confirm.ask("[#fbbf24]I'm authorized to test these target(s). Run the pentest?[/]", default=True):
+        console.print("[dim]Cancelled — nothing was sent.[/]")
+        return
+    printer = make_progress_reporter(console)
+    results = []
+    for tgt in tlist:
+        console.print(Text.assemble(("\n── ", "dim"), (tgt, f"bold {BLUE}"), (" ──", "dim")))
+        results.append(playbooks.run_playbook(pb, tgt, on_event=printer))
+    console.print()
+    for r in results:
+        render(r, console)
+
+
 def _osint_flow(dry: bool = False) -> None:
     """Menu flow: OSINT / HUMINT footprint of a domain, name, email, or phone (passive, read-only)."""
     target = Prompt.ask(f"[{PURPLE}]OSINT target[/] "
@@ -1254,6 +1509,8 @@ def interactive() -> None:
                 ("o", "OSINT / HUMINT", "passive footprint — domain · name · email · phone"),
                 ("a", "API testing", "discover endpoints + bounded posture checks"),
                 ("c", "Clients & scope", "manage clients, engagements & authorized targets"),
+                ("b", "Playbooks", "run an ordered recon → web → TLS recipe"),
+                ("t", "Pentest", "pick tests + target(s) → one combined report"),
                 ("p", "Doctor", "check Docker & pre-pull the tool images"),
                 ("5", "What it checks", "list the checks temple-guard runs"),
                 ("6", "Help", "commands & flags"),
@@ -1287,6 +1544,10 @@ def interactive() -> None:
             elif choice == "c":
                 from . import clients
                 clients.manage(console)
+            elif choice == "b":
+                _playbook_flow(dry=dry)
+            elif choice == "t":
+                _pentest_flow(dry=dry)
             elif choice == "p":
                 _doctor()
             elif choice == "5":
