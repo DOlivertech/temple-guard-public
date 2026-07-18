@@ -113,7 +113,8 @@ def get(pid: str) -> Optional[Playbook]:
 
 
 def run_playbook(pb: Playbook, target: str, *, on_event: Optional[Callable] = None,
-                 stop_event=None, timeout: Optional[int] = None) -> checks.ScanResult:
+                 stop_event=None, timeout: Optional[int] = None,
+                 tool_wrapper=None) -> checks.ScanResult:
     """Run every step of ``pb`` against ``target`` in order, merging findings into ONE
     :class:`checks.ScanResult`.
 
@@ -128,6 +129,10 @@ def run_playbook(pb: Playbook, target: str, *, on_event: Optional[Callable] = No
     def emit(kind: str, **kw) -> None:
         if on_event:
             on_event(kind, **kw)
+
+    # Optional per-tool UI wrapper (e.g. a live spinner) injected by the CLI; a no-op otherwise.
+    from contextlib import nullcontext
+    wrap = tool_wrapper or (lambda *_a, **_k: nullcontext())
 
     # If any step needs Docker and it's unavailable, run natives and skip the rest cleanly.
     docker_ok = True
@@ -159,12 +164,16 @@ def run_playbook(pb: Playbook, target: str, *, on_event: Optional[Callable] = No
         try:
             if step.kind == "recon":
                 from . import recon_tools
-                findings, _raw, _ok = recon_tools.run_recon(
-                    step.ref, target, timeout=timeout, stop_event=stop_event)
+                image = getattr(recon_tools.RECON_TOOLS.get(step.ref), "image", None)
+                with wrap(step.label, image):
+                    findings, _raw, _ok = recon_tools.run_recon(
+                        step.ref, target, timeout=timeout, stop_event=stop_event)
             else:
                 from . import tools
-                findings, _raw, _ok = tools.run_tool(
-                    step.ref, target, timeout=timeout, stop_event=stop_event)
+                image = getattr(tools.TOOLS.get(step.ref), "image", None)
+                with wrap(step.label, image):
+                    findings, _raw, _ok = tools.run_tool(
+                        step.ref, target, timeout=timeout, stop_event=stop_event)
         except Exception as exc:                # noqa: BLE001 — one tool failing must not abort the chain
             findings = [checks.Finding(
                 title=f"{step.label} did not complete",

@@ -226,30 +226,48 @@ def _parse_spec_yaml_text(text: str, source: str) -> list:
 
 def discover_endpoints(base_url: str, timeout: float = DEFAULT_TIMEOUT,
                        budget: Optional[_Budget] = None,
-                       client: Optional[httpx.Client] = None) -> list:
+                       client: Optional[httpx.Client] = None,
+                       on_probe: Optional[Callable[[str, str, int], None]] = None,
+                       spec_url: Optional[str] = None,
+                       extra_paths: Optional[list] = None) -> list:
     """Discover an API's endpoints. Returns ``[{"method", "path", "source"}]``.
 
     Strategy: fetch a machine-readable spec at the well-known locations and parse its
     paths + methods; if none is served, probe a small fixed list of common API paths.
     Bounded: at most ``len(SPEC_PATHS) + len(COMMON_API_PATHS)`` requests (default cap 20),
     each with a short timeout. Read-only (GET only).
+
+    ``on_probe(kind, path, status)`` — if given — is called for every attempt (``kind`` is
+    ``"spec"`` or ``"probe"``; ``status`` is 0 on a connection error) so callers can show a
+    live/verbose discovery log. ``spec_url`` forces one spec location (path or full URL);
+    ``extra_paths`` adds caller-supplied paths to the probe list.
     """
     base = _normalize(base_url)
+    spec_paths = [spec_url] if spec_url else list(SPEC_PATHS)
+    probe_paths = list(COMMON_API_PATHS) + [p for p in (extra_paths or []) if p]
     if budget is None:
-        budget = _Budget(len(SPEC_PATHS) + len(COMMON_API_PATHS) + 1)
+        budget = _Budget(len(spec_paths) + len(probe_paths) + 2)
     own_client = client is None
     if client is None:
         client = _client(timeout)
+
+    def _note(kind: str, path: str, status: int) -> None:
+        if on_probe:
+            on_probe(kind, path, status)
+
     try:
         # (a) try to fetch + parse a spec
-        for sp in SPEC_PATHS:
+        for sp in spec_paths:
             if not budget.available():
                 break
             budget.spend()
+            spurl = sp if "://" in sp else base + sp
             try:
-                r = client.get(base + sp)
+                r = client.get(spurl)
             except httpx.HTTPError:
+                _note("spec", sp, 0)
                 continue
+            _note("spec", sp, r.status_code)
             if r.status_code != 200 or not r.content:
                 continue
             source = "spec:" + sp
@@ -288,14 +306,16 @@ def discover_endpoints(base_url: str, timeout: float = DEFAULT_TIMEOUT,
 
         found: list = []
         seen = set()
-        for p in COMMON_API_PATHS:
+        for p in probe_paths:
             if not budget.available():
                 break
             budget.spend()
             try:
                 r = client.get(base + p)
             except httpx.HTTPError:
+                _note("probe", p, 0)
                 continue
+            _note("probe", p, r.status_code)
             if r.status_code == 404 or p in seen:  # absent, or already seen
                 continue
             if catch_all is not None and r.status_code == catch_all[0]:
@@ -552,7 +572,10 @@ def test_endpoints(base_url: str, endpoints: list, max: int = MAX_TEST_ENDPOINTS
 def run_api_test(base_url: str, on_event: Optional[Callable[..., None]] = None,
                  timeout: float = DEFAULT_TIMEOUT,
                  max_requests: int = MAX_TOTAL_REQUESTS,
-                 max_test: int = MAX_TEST_ENDPOINTS) -> ScanResult:
+                 max_test: int = MAX_TEST_ENDPOINTS,
+                 on_probe: Optional[Callable[[str, str, int], None]] = None,
+                 spec_url: Optional[str] = None,
+                 manual_endpoints: Optional[list] = None) -> ScanResult:
     """Discover + bounded-test an API and return a ``checks.ScanResult``.
 
     Mirrors ``checks.scan``: builds a ``ScanResult`` (so ``report``/``monitor`` render it
@@ -566,6 +589,7 @@ def run_api_test(base_url: str, on_event: Optional[Callable[..., None]] = None,
     base = _normalize(base_url)
     res = ScanResult(url=base)
     res.endpoints = []  # type: ignore[attr-defined]  (extra attr; ignored by report)
+    res.probes = []     # type: ignore[attr-defined]  discovery attempts: [{kind, path, status}]
     budget = _Budget(max_requests)
 
     def emit(kind: str, **kw) -> None:
@@ -575,6 +599,11 @@ def run_api_test(base_url: str, on_event: Optional[Callable[..., None]] = None,
     def add(f: Finding) -> None:
         res.findings.append(f)
         emit("finding", finding=f)
+
+    def _probe(kind: str, path: str, status: int) -> None:
+        res.probes.append({"kind": kind, "path": path, "status": status})  # type: ignore[attr-defined]
+        if on_probe:
+            on_probe(kind, path, status)
 
     client = _client(timeout)
     try:
@@ -599,7 +628,16 @@ def run_api_test(base_url: str, on_event: Optional[Callable[..., None]] = None,
         # phase 1 — discovery
         emit("step", category="tech", name="API discovery",
              desc="Fetch an OpenAPI/Swagger spec, else probe common API paths")
-        eps = discover_endpoints(base, timeout=timeout, budget=budget, client=client)
+        eps = discover_endpoints(base, timeout=timeout, budget=budget, client=client,
+                                 on_probe=_probe, spec_url=spec_url)
+        # merge caller-supplied known routes (tested even if discovery found nothing)
+        if manual_endpoints:
+            have = {(e.get("method", "GET"), e.get("path")) for e in eps}
+            for e in manual_endpoints:
+                key = (e.get("method", "GET"), e.get("path"))
+                if e.get("path") and key not in have:
+                    have.add(key)
+                    eps.append({"method": e.get("method", "GET"), "path": e["path"], "source": "manual"})
         res.endpoints = eps  # type: ignore[attr-defined]
         if eps:
             src = str(eps[0].get("source", ""))
@@ -614,6 +652,21 @@ def run_api_test(base_url: str, on_event: Optional[Callable[..., None]] = None,
                     "(auth or network ACL) and ensure it doesn't leak internal-only routes."))
         else:
             emit("clean", category="tech", name="API discovery — no endpoints found")
+            probes = getattr(res, "probes", [])
+            n_spec = sum(1 for p in probes if p["kind"] == "spec")
+            n_probe = sum(1 for p in probes if p["kind"] == "probe")
+            protected = sorted({p["path"] for p in probes if p["status"] in (401, 403)})
+            detail = (f"No OpenAPI/Swagger spec was served (tried {n_spec} location(s)) and none of "
+                      f"the {n_probe} probed common path(s) responded. Root {base} returned "
+                      f"{res.status}.")
+            if protected:
+                detail += f" Note: {', '.join(protected[:5])} returned 401/403 — those routes exist but are protected."
+            add(Finding(
+                "No API endpoints discovered", "info", "discovery", detail,
+                "If your API serves a spec at a non-standard path, re-run with `--spec <url>`. "
+                "To test routes you already know, pass `--endpoints /path1,/path2`. A 404 on every "
+                "path (rather than 401/403) usually means the API uses non-standard routing rather "
+                "than being auth-gated."))
 
         # phase 2 — bounded testing
         emit("step", category="methods", name="API endpoint testing",

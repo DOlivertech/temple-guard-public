@@ -5,6 +5,7 @@ explicit written permission to test.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.metadata as _ilm
 import json
 import os
@@ -988,21 +989,54 @@ def doctor(pull: bool = typer.Option(False, "--pull", help="Pull any missing Doc
 
 
 # ── OSINT / HUMINT ────────────────────────────────────────────────────────────
+@contextlib.contextmanager
+def _live_tool(label: str, image: str = None):
+    """Wrap a blocking Docker tool call with a live spinner + elapsed clock so it never looks
+    hung. If the image isn't cached yet, show a distinct 'pulling image' phase first (Docker
+    pulls on demand — a tool's first run can take minutes, especially under emulation)."""
+    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+    cols = (SpinnerColumn(style=PURPLE), TextColumn("{task.description}"), TimeElapsedColumn())
+    if image:
+        try:
+            missing = not tools.image_present(image)
+        except Exception:  # noqa: BLE001
+            missing = False
+        if missing:
+            with Progress(*cols, console=console, transient=True) as p:
+                p.add_task(f"[bold white]{label}[/]  ·  pulling [dim]{image}[/] "
+                           f"[dim](first run — can take a few minutes)[/]", total=None)
+                try:
+                    tools.pull_image(image)
+                except Exception:  # noqa: BLE001 — the run below surfaces any real error
+                    pass
+    with Progress(*cols, console=console, transient=True) as p:
+        p.add_task(f"[bold white]{label}[/]  ·  running…", total=None)
+        yield
+
+
 def _run_osint(target: str, which: list, json_out: bool):
     """Run the chosen OSINT tools against a raw target and collect findings into a ScanResult."""
     from .checks import ScanResult
     res = ScanResult(url=target, reachable=True)
     for key in which:
+        image = getattr(tools.recon_tools.RECON_TOOLS.get(key), "image", None)
         if not json_out:
-            console.print(Text.assemble(("● ", f"bold {PURPLE}"), (f"{key}", "bold white"), ("  …", "dim")))
+            console.print(Text.assemble(("● ", f"bold {PURPLE}"), (f"{key}", "bold white")))
         try:
-            findings, _raw, _ok = tools.recon_tools.run_recon(key, target)
+            if json_out:
+                findings, _raw, _ok = tools.recon_tools.run_recon(key, target)
+            else:
+                with _live_tool(key, image):
+                    findings, _raw, _ok = tools.recon_tools.run_recon(key, target)
         except Exception as exc:  # noqa: BLE001
             msg = f"{key} error — {str(exc)[:70]}"
             print(msg, file=sys.stderr) if json_out else console.print(f"[#f87171]  {msg}[/]")
             continue
         res.findings.extend(findings)
         if not json_out:
+            n_hi = sum(1 for f in findings if f.severity in ("high", "medium"))
+            console.print(Text.assemble((f"    {len(findings)} finding(s)", f"{BLUE}"),
+                                        (f" · {n_hi} notable" if n_hi else "", "dim")))
             for f in findings:
                 console.print(Text.assemble((f"    {f.severity.upper():4} ", SEV_STYLE.get(f.severity, "dim")),
                                             (f.title[:72], "white")))
@@ -1060,27 +1094,54 @@ def osint_cmd(
 @app.command("apitest")
 def apitest_cmd(
     url: str = typer.Argument(..., help="Base URL of the API to test — yours / authorized."),
+    spec: str = typer.Option(None, "--spec",
+                             help="OpenAPI/Swagger spec URL if it's at a non-standard path (e.g. /v3/api-docs)."),
+    endpoints: str = typer.Option(None, "--endpoints",
+                                  help="Comma-list of known routes to test directly, e.g. /users,/orders/1."),
     report: Path = typer.Option(None, "--report", "-o", help="Write a report (.html/.pdf/.md/.json)."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Stream discovery + each finding live."),
-    json_out: bool = typer.Option(False, "--json", help="Machine-readable findings."),
+    verbose: bool = typer.Option(False, "--verbose", "-v",
+                                 help="Stream discovery — every path tried + its status — and each finding live."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable findings (+ discovery probes)."),
     no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
 ):
-    """Discover an API's endpoints (OpenAPI/Swagger or probing) + run bounded, read-only posture checks."""
+    """Discover an API's endpoints (OpenAPI/Swagger or probing) + run bounded, read-only posture checks.
+
+    No spec + non-standard routes (nothing discovered)? Point it at your spec, or list routes yourself:
+      temple-guard apitest https://api.example.com --spec https://api.example.com/v3/api-docs
+      temple-guard apitest https://api.example.com --endpoints /users,/orders,/health -v
+    """
     from .apitest import run_api_test
+    manual = [{"method": "GET", "path": (s if s.startswith("/") else "/" + s)}
+              for s in (endpoints.replace(",", " ").split() if endpoints else []) if s]
     if not json_out:
         _banner(animate=not no_anim)
         _authz_notice()
         console.print()
+
+    def _probe_log(kind, path, status):
+        if not verbose or json_out:
+            return
+        colour = ("#4ade80" if 200 <= status < 300 else
+                  "#fbbf24" if status in (401, 403, 405) else
+                  "#f87171" if status else "dim")
+        note = ("  (exists · protected)" if status in (401, 403)
+                else "  (exists)" if 200 <= status < 300 else "")
+        console.print(Text.assemble(("      ", ""), (f"{kind:5} ", "dim"), (path.ljust(22), "white"),
+                                    (f"→ {status or 'err'}", colour), (note, "dim")))
+
     printer = make_progress_reporter(console) if (verbose and not json_out) else None
-    result = run_api_test(url, on_event=printer)
+    result = run_api_test(url, on_event=printer, on_probe=_probe_log,
+                          spec_url=spec, manual_endpoints=manual or None)
     if json_out:
         d = _result_dict(result)
         d["endpoints"] = getattr(result, "endpoints", [])
+        d["probes"] = getattr(result, "probes", [])
         print(json.dumps(d, indent=2))
         raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
     n = len(getattr(result, "endpoints", []))
+    n_probes = len(getattr(result, "probes", []))
     console.print(Text.assemble(("Discovered ", "dim"), (f"{n} endpoint(s)", f"bold {BLUE}"),
-                                ("  ·  testing a bounded subset", "dim")))
+                                (f"  ·  {n_probes} path(s) probed  ·  testing a bounded subset", "dim")))
     render(result, console)
     if report:
         _write_report(result, report)
@@ -1234,7 +1295,8 @@ def playbook_run(
         console.print(Text.assemble(("\n▶ ", f"bold {PURPLE}"), (pb.name, "bold white"), (f"   {pb.summary}", "dim")))
         console.print()
     printer = make_progress_reporter(console) if (verbose and not json_out) else None
-    result = playbooks.run_playbook(pb, url, on_event=printer)
+    result = playbooks.run_playbook(pb, url, on_event=printer,
+                                    tool_wrapper=(None if json_out else _live_tool))
     if json_out:
         print(json.dumps(_result_dict(result), indent=2))
         raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
@@ -1271,7 +1333,8 @@ def _playbook_flow(dry: bool = False) -> None:
         console.print("[dim]Cancelled — nothing was sent.[/]")
         return
     console.print()
-    result = playbooks.run_playbook(pb, url, on_event=make_progress_reporter(console))
+    result = playbooks.run_playbook(pb, url, on_event=make_progress_reporter(console),
+                                    tool_wrapper=_live_tool)
     console.print()
     render(result, console)
 
@@ -1386,7 +1449,8 @@ def pentest(
     for tgt in tlist:
         if not json_out:
             console.print(Text.assemble(("\n── ", "dim"), (tgt, f"bold {BLUE}"), (" ──", "dim")))
-        results.append(playbooks.run_playbook(pb, tgt, on_event=printer))
+        results.append(playbooks.run_playbook(pb, tgt, on_event=printer,
+                                              tool_wrapper=(None if json_out else _live_tool)))
     if json_out:
         print(json.dumps([_result_dict(r) for r in results], indent=2))
         raise typer.Exit(code=1 if any(r.by_severity.get("high") for r in results) else 0)
@@ -1428,7 +1492,7 @@ def _pentest_flow(dry: bool = False) -> None:
     results = []
     for tgt in tlist:
         console.print(Text.assemble(("\n── ", "dim"), (tgt, f"bold {BLUE}"), (" ──", "dim")))
-        results.append(playbooks.run_playbook(pb, tgt, on_event=printer))
+        results.append(playbooks.run_playbook(pb, tgt, on_event=printer, tool_wrapper=_live_tool))
     console.print()
     for r in results:
         render(r, console)
