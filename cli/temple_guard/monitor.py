@@ -489,6 +489,46 @@ class _Keys(threading.Thread):
         self._acked = threading.Event()   # reader confirms it's in cooked mode
 
     def run(self) -> None:
+        if os.name == "nt":
+            self._run_windows()
+        else:
+            self._run_unix()
+
+    def _run_windows(self) -> None:
+        """Windows key reader (msvcrt). No termios — line prompts echo natively, so pause() just
+        stops us consuming keys. Arrow keys arrive as a 0x00/0xe0 prefix + code; map them to the
+        same ESC[A / ESC[B the handler already understands."""
+        try:
+            import msvcrt
+        except ImportError:
+            return  # watch-only
+        while not self.state["quit"]:
+            if self._pause.is_set():          # a line prompt is open — step aside
+                self._acked.set()
+                while self._pause.is_set() and not self.state["quit"]:
+                    time.sleep(0.05)
+                self._acked.clear()
+                continue
+            if not msvcrt.kbhit():
+                time.sleep(0.02)
+                continue
+            try:
+                ch = msvcrt.getwch()
+            except Exception:  # noqa: BLE001
+                continue
+            if ch in ("\x00", "\xe0"):         # special-key prefix (arrows / F-keys / …)
+                code = msvcrt.getwch()
+                if code == "H":
+                    data = b"\x1b[A"           # ↑
+                elif code == "P":
+                    data = b"\x1b[B"           # ↓
+                else:
+                    continue                   # ←/→, Home/End, F-keys → ignore
+            else:
+                data = ch.encode("utf-8", "replace")
+            self._handle(data)
+
+    def _run_unix(self) -> None:
         try:
             import select
             import termios
