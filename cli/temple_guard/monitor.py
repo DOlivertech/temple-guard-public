@@ -57,6 +57,8 @@ class Task:
     id: int
     url: str
     tools: list = field(default_factory=list)   # extra Docker tools to run after the native checks
+    recon: list = field(default_factory=list)   # OSINT/recon tools (run via recon_tools.run_recon) — kind="osint"
+    kind: str = "scan"               # scan (native + tools) | osint (recon only) | api (apitest) | op (extension)
     offensive: bool = False          # a "hot" task (tints the saber + SCAN tag red); set by the extension
     op: object = None                # an extension-supplied unit of work (run via _ext.run_op) instead of a scan
     status: str = "queued"          # queued | running | done | failed | stopped
@@ -71,9 +73,14 @@ class Task:
 
     @property
     def total(self) -> int:
-        """Progress steps: 1 for an extension op, else the native checks + one per Docker tool."""
+        """Progress steps by kind: 1 for an extension op, len(recon) for osint, 2 for api,
+        else the native checks + one per Docker tool."""
         if self.op is not None:
             return 1
+        if self.kind == "osint":
+            return max(1, len(self.recon))
+        if self.kind == "api":
+            return 2
         return TOTAL_STEPS + len(self.tools)
 
     @property
@@ -110,12 +117,14 @@ class TaskManager:
     def log(self, level: str, msg: str) -> None:
         self.log_lines.append((time.strftime("%H:%M:%S"), level, msg))
 
-    def add(self, url: str, tools: list = None, offensive: bool = False, op: object = None) -> Task:
+    def add(self, url: str, tools: list = None, offensive: bool = False, op: object = None,
+            recon: list = None, kind: str = "scan") -> Task:
         """Add a target. ADDITIVE ONLY — appends a brand-new Task and submits it to the pool;
         it never touches, restarts, or cancels any existing task. Adding while others run just
         grows the list; the new task runs as soon as a worker is free (up to `workers`), and
         the running ones keep their own threads, progress, and findings untouched."""
-        t = Task(id=next(self._ids), url=url, tools=list(tools or []), offensive=offensive, op=op)
+        t = Task(id=next(self._ids), url=url, tools=list(tools or []), offensive=offensive, op=op,
+                 recon=list(recon or []), kind=kind)
         with self._lock:
             self.tasks.append(t)
         lbl = _task_tag(t)
@@ -131,11 +140,17 @@ class TaskManager:
 
     def restart(self, t: Task) -> Task:
         self.log("INF", f"restart {t.url}")
-        return self.add(t.url, t.tools, t.offensive, t.op)
+        return self.add(t.url, t.tools, t.offensive, t.op, t.recon, t.kind)
 
     def _run(self, t: Task) -> None:
         if t.op is not None and _ext is not None:   # an extension op (not a defensive scan)
             self._run_op(t)
+            return
+        if t.kind == "api":                          # API discovery + bounded posture checks
+            self._run_api(t)
+            return
+        if t.kind == "osint":                        # passive OSINT/recon tools (no native web checks)
+            self._run_recon(t)
             return
         t.status = "running"
         t.started = time.monotonic()
@@ -205,6 +220,92 @@ class TaskManager:
                          f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
             t.step += 1
 
+    def _run_api(self, t: Task) -> None:
+        """Run apitest (discover endpoints + bounded posture checks) as a live monitor task."""
+        t.status = "running"
+        t.started = time.monotonic()
+        t.current = "api discovery"
+        self.log("INF", f"apitest start {t.url}")
+
+        def on_event(kind: str, **k) -> None:
+            if kind == "step":
+                if t._stop.is_set():
+                    raise _Stopped()
+                t.step = min(t.step + 1, t.total)
+                t.current = k.get("name", "…")
+            elif kind == "finding":
+                f = k["finding"]
+                t.findings[f.severity] += 1
+                self.log(LEVEL_FOR_SEV.get(f.severity, "INF"),
+                         f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
+            elif kind == "unreachable":
+                self.log("ERR", f"unreachable {t.url}")
+
+        try:
+            from .apitest import run_api_test
+            res = run_api_test(t.url, on_event=on_event)
+            t.result = res
+            if not res.reachable:
+                t.status, t.error, t.current = "failed", (res.error or "unreachable"), "unreachable"
+                self.log("ERR", f"failed  {t.url} — {t.error[:50]}")
+            else:
+                t.step, t.status, t.current = t.total, "done", "done"
+                self.log("INF", f"done    {t.url} — {t.n_findings} findings")
+        except _Stopped:
+            t.status, t.current = "stopped", "stopped"
+            self.log("WRN", f"stopped {t.url}")
+        except Exception as exc:  # noqa: BLE001 — surface any error as a failed task
+            t.status, t.error, t.current = "failed", str(exc), "error"
+            self.log("ERR", f"error   {t.url} — {str(exc)[:50]}")
+        t.ended = time.monotonic()
+
+    def _run_recon(self, t: Task) -> None:
+        """Run passive OSINT/recon tools (no native web checks) and fold findings into the report."""
+        t.status = "running"
+        t.started = time.monotonic()
+        t.current = "osint"
+        self.log("INF", f"osint start {t.url}")
+        from .checks import ScanResult
+        res = ScanResult(url=t.url, reachable=True)
+        t.result = res
+        ok, why = _tools.docker_available()
+        if not ok:
+            self.log("ERR", f"docker unavailable — osint skipped: {why}")
+            self.log("WRN", _tools.docker_hint())
+            t.status, t.error, t.current = "failed", "docker unavailable", "no docker"
+            t.ended = time.monotonic()
+            return
+        try:
+            from . import recon_tools
+            for key in t.recon:
+                if t._stop.is_set():
+                    raise _Stopped()
+                t.current = key
+                self.log("INF", f"osint   {t.url} · {key} …")
+                try:
+                    findings, _raw, _ok = recon_tools.run_recon(key, t.url, stop_event=t._stop)
+                except Exception as exc:  # noqa: BLE001 — one tool failing shouldn't sink the task
+                    self.log("ERR", f"{key} error — {str(exc)[:50]}")
+                    t.step += 1
+                    continue
+                if t._stop.is_set():
+                    raise _Stopped()
+                for f in findings:
+                    t.findings[f.severity] += 1
+                    res.findings.append(f)
+                    self.log(LEVEL_FOR_SEV.get(f.severity, "INF"),
+                             f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
+                t.step += 1
+            t.step, t.status, t.current = t.total, "done", "done"
+            self.log("INF", f"done    {t.url} — {t.n_findings} findings")
+        except _Stopped:
+            t.status, t.current = "stopped", "stopped"
+            self.log("WRN", f"stopped {t.url}")
+        except Exception as exc:  # noqa: BLE001 — surface any error as a failed task
+            t.status, t.error, t.current = "failed", str(exc), "error"
+            self.log("ERR", f"error   {t.url} — {str(exc)[:50]}")
+        t.ended = time.monotonic()
+
     def _run_op(self, t: Task) -> None:
         """Run an extension-supplied op (bounded, returns findings) and fold them into the report."""
         t.status = "running"
@@ -257,6 +358,10 @@ LEVEL_FOR_SEV = {"high": "ERR", "medium": "WRN", "low": "INF", "info": "INF"}
 
 def _profile_label(t: Task) -> str:
     """A short tag for what runs against a target: '' (native only), 'deep', or the tool set."""
+    if t.kind == "osint":
+        return "osint"
+    if t.kind == "api":
+        return "api"
     if not t.tools:
         return ""
     if list(t.tools) == DEEP_TOOLS:
@@ -651,57 +756,74 @@ def _norm(u: str) -> str:
     return ("http://" if local else "https://") + u
 
 
-def _spec(tools: list = None, offensive: bool = False, op: object = None) -> dict:
+OSINT_PROFILE = ["theharvester", "subfinder", "spiderfoot"]   # default recon set for a monitor OSINT task
+
+
+def _spec(tools: list = None, offensive: bool = False, op: object = None,
+          recon: list = None, kind: str = "scan") -> dict:
     """A profile spec: what to run against a target."""
-    return {"tools": list(tools or []), "offensive": offensive, "op": op}
+    return {"tools": list(tools or []), "offensive": offensive, "op": op,
+            "recon": list(recon or []), "kind": kind}
 
 
 def _prompt_targets(console: Console) -> tuple:
-    """Ask for one or more targets, then what should run against them.
-    Returns (urls, spec) — spec is {tools, offensive, op}. Authorized scope targets,
-    if any, can be picked instead of / in addition to typed URLs."""
+    """Pick WHAT to run first (task type), then the target(s). Returns (urls, spec).
+    Task-first so it's clear what you can run before typing a target. Authorized scope
+    targets, if any, can be picked instead of / in addition to typed ones."""
     import re
     from rich.prompt import Prompt
     from . import clients
+    spec = _prompt_profile(console)                # ← task type FIRST
+    osint = spec.get("kind") == "osint"
+    label = "OSINT target(s)" if osint else "Target(s)"
+    hint = "domain · name · email · phone — comma-separated" if osint else "e.g. https://a.com https://b.com"
     urls = []
     if clients.all_targets():
         console.print("  [dim]Tip: pick one from your authorized scope, or type target(s) below.[/]")
         picked = clients.pick_target(console)      # one scoped target (or None)
         if picked:
-            urls.append(_norm(picked))
-    raw = Prompt.ask("[cyan]Targets[/] [dim](space/comma separated — "
-                     "e.g. https://a.com https://b.com; blank = done)[/]").strip()
-    urls += [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
+            urls.append(picked if osint else _norm(picked))
+    raw = Prompt.ask(f"[cyan]{label}[/] [dim]({hint}; blank = done)[/]").strip()
+    if osint:                                       # OSINT targets may contain spaces (names) → split on comma only
+        urls += [u.strip() for u in raw.split(",") if u.strip()]
+    else:
+        urls += [_norm(u) for u in re.split(r"[\s,]+", raw) if u.strip()]
     if not urls:
         return [], _spec()
-    return urls, _prompt_profile(console, len(urls))
+    return urls, spec
 
 
-def _prompt_profile(console: Console, n_targets: int) -> dict:
-    """Pick what runs against the new target(s): native, deep, chosen tools, or an extension
-    profile. Returns a spec {tools, offensive, op}."""
+def _prompt_profile(console: Console) -> dict:
+    """Pick WHAT runs against the new target(s) — task type first. Returns a spec
+    {tools, recon, kind, offensive, op}."""
     import re
 
     from rich.prompt import Prompt
-    scope = f"these {n_targets} targets" if n_targets > 1 else "this target"
     console.print()
-    console.print(f"  [bold]What should run against {scope}?[/]")
+    console.print("  [bold]What should run against the new target(s)?[/]")
     console.print("    [bold]1[/] Native checks   [dim]— headers · TLS · cookies · exposure · "
                   "SPF/DMARC   (fast, no Docker)[/]")
     console.print(f"    [bold]2[/] Deep            [dim]— native + Docker recon: "
                   f"{', '.join(DEEP_TOOLS)}[/]")
     console.print("    [bold]3[/] Pick tools…     [dim]— native + specific Docker tools[/]")
-    choices = ["1", "2", "3"]
+    console.print("    [bold]4[/] OSINT / HUMINT  [dim]— passive footprint: "
+                  "theHarvester · subfinder · spiderfoot   (domain / name / email)[/]")
+    console.print("    [bold]5[/] API testing     [dim]— discover endpoints + bounded read-only checks[/]")
+    choices = ["1", "2", "3", "4", "5"]
     if _ext is not None:
-        console.print(f"    [bold]4[/] {_ext.PROFILE_LABEL}")
-        choices.append("4")
+        console.print(f"    [bold]6[/] {_ext.PROFILE_LABEL}")
+        choices.append("6")
     choice = Prompt.ask("  choose", choices=choices, default="1")
     if choice == "1":
         return _spec()
     if choice == "2":
         return _spec(DEEP_TOOLS)
-    if choice == "4" and _ext is not None:
-        return _ext.pick_profile(console, n_targets) or _spec()
+    if choice == "4":
+        return _spec(recon=list(OSINT_PROFILE), kind="osint")
+    if choice == "5":
+        return _spec(kind="api")
+    if choice == "6" and _ext is not None:
+        return _ext.pick_profile(console, 1) or _spec()
     console.print()
     for i, key in enumerate(MONITOR_TOOLS, 1):
         console.print(f"    [bold]{i:>2}[/] {key:8} [dim]— {_tools.TOOLS[key].desc}[/]")
@@ -796,7 +918,8 @@ def _dashboard(mgr: TaskManager, urls: list, console: Console, report_path: str 
                         live.stop()
                         new_urls, spec = _prompt_targets(console)
                         for u in new_urls:
-                            mgr.add(u, tools=spec["tools"], offensive=spec["offensive"], op=spec["op"])
+                            mgr.add(u, tools=spec["tools"], offensive=spec["offensive"], op=spec["op"],
+                                    recon=spec.get("recon"), kind=spec.get("kind", "scan"))
                         live.start(refresh=True)
                         keys.resume()
                     if state["report"]:             # 'w' — write ONE combined report for all scans

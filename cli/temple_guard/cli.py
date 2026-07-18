@@ -130,18 +130,45 @@ def _authz_notice() -> None:
          "italic #fbbf24")))
 
 
+# Colours for the fuzzy menu (InquirerPy renders each row as one style, so colour lives in
+# the pointer / current row / match highlight; the numbered fallback below is fully Rich-coloured).
+_MENU_STYLE = {
+    "questionmark": "#a78bfa bold",
+    "answermark": "#a78bfa",
+    "answer": "#38bdf8 bold",
+    "pointer": "#ffd60a bold",
+    "marker": "#4ade80",
+    "fuzzy_prompt": "#a78bfa bold",
+    "fuzzy_info": "#64748b",
+    "fuzzy_border": "#334155",
+    "fuzzy_match": "#38bdf8 bold",
+    "instruction": "#64748b",
+    "long_instruction": "#64748b",
+}
+
+
+def _menu_name(cat: str, lbl: str, desc: str, has_cat: bool) -> str:
+    """Render one menu row as aligned columns: [CATEGORY] label · description."""
+    catcol = f"{(cat or ''):<7}" if has_cat else ""
+    return f"{catcol}{lbl:<19}{desc}" if desc else f"{catcol}{lbl}"
+
+
 def _pick(message: str, items: list, default: str = None):
-    """Fuzzy, type-to-filter selector (fzy / fzf-style). `items` = [(value, label, desc)].
-    **Esc** returns None (go back); **Ctrl+C** bubbles up to quit. Falls back to a numbered
-    rich prompt when a fuzzy TTY isn't available (or TG_NO_FUZZY is set)."""
+    """Fuzzy, type-to-filter selector (fzy / fzf-style). `items` = ``(value, label, desc)`` or
+    ``(value, label, desc, category)`` — a category groups + aligns rows into a left column.
+    **Esc** returns None (go back); **Ctrl+C** bubbles up to quit. Falls back to a numbered,
+    grouped Rich prompt when a fuzzy TTY isn't available (or TG_NO_FUZZY is set)."""
+    has_cat = any(len(it) > 3 and it[3] for it in items)
     if sys.stdin.isatty() and console.is_terminal and not os.environ.get("TG_NO_FUZZY"):
         try:
             from InquirerPy import inquirer
             from InquirerPy.base.control import Choice
-            choices = [Choice(value=v, name=(f"{lbl}   ·   {d}" if d else lbl)) for v, lbl, d in items]
+            choices = [Choice(value=it[0],
+                              name=_menu_name(it[3] if len(it) > 3 else "", it[1], it[2], has_cat))
+                       for it in items]
             return inquirer.fuzzy(
-                message=message, choices=choices, border=True,
-                max_height="70%", cycle=True, pointer="❯", qmark="›", amark="›",
+                message=message, choices=choices, border=True, style=_MENU_STYLE,
+                max_height="70%", cycle=True, pointer="❯", marker="›", qmark="›", amark="›",
                 mandatory=False, keybindings={"skip": [{"key": "escape"}]},   # Esc → skip → None (back)
                 instruction="(type to filter · ↑↓ move · enter select)",
                 long_instruction="Esc = back      Ctrl+C = quit",
@@ -149,10 +176,16 @@ def _pick(message: str, items: list, default: str = None):
         except Exception:  # TTY / import issue → numbered fallback (Ctrl+C bubbles, not caught here)
             pass
     console.print(Text(f"\n{message}", style=f"bold {PURPLE}"))
-    for v, lbl, d in items:
-        console.print(Text.assemble((f"  {v}  ", f"bold {BLUE}"), (lbl.ljust(16), "bold white"), (d, "dim")))
-    console.print(Text("  Ctrl+C = quit", style="dim"))
-    keys = [v for v, _, _ in items]
+    last_cat = None
+    for it in items:
+        v, lbl, d = it[0], it[1], it[2]
+        cat = it[3] if len(it) > 3 else ""
+        if has_cat and cat != last_cat:
+            console.print(Text(f"\n  {cat}", style="bold #64748b"))
+            last_cat = cat
+        console.print(Text.assemble((f"  {v:>2}  ", f"bold {BLUE}"), (lbl.ljust(18), "bold white"), (d, "dim")))
+    console.print(Text("\n  Ctrl+C = quit", style="dim"))
+    keys = [it[0] for it in items]
     return Prompt.ask(f"[{BLUE}]Choose[/]", choices=keys, default=default or keys[0])
 
 
@@ -1565,22 +1598,22 @@ def interactive() -> None:
                     ("\n ● DRY-RUN ", "bold #fbbf24 reverse"),
                     ("  every action is previewed — nothing is sent or run.", "italic #fbbf24")))
             items = [
-                ("1", "Scan a target", "read-only native checks"),
-                ("2", "Deep scan", "native checks + Docker recon tools"),
-                ("m", "Monitor", "live dashboard — run several scans at once"),
-                ("3", "Run a tool", "one Kali tool with your own arguments"),
-                ("4", "Kali shell", "interactive shell in a Kali container"),
-                ("o", "OSINT / HUMINT", "passive footprint — domain · name · email · phone"),
-                ("a", "API testing", "discover endpoints + bounded posture checks"),
-                ("c", "Clients & scope", "manage clients, engagements & authorized targets"),
-                ("b", "Playbooks", "run an ordered recon → web → TLS recipe"),
-                ("t", "Pentest", "pick tests + target(s) → one combined report"),
-                ("p", "Doctor", "check Docker & pre-pull the tool images"),
-                ("5", "What it checks", "list the checks temple-guard runs"),
-                ("6", "Help", "commands & flags"),
-                ("7", "Update", "pull the newest temple-guard from its repo"),
-                ("d", f"Dry-run: {'ON' if dry else 'OFF'}", "toggle preview-only mode for every action"),
-                ("q", "Quit", "or Esc / Ctrl+C"),
+                ("1", "Scan a target", "read-only native checks", "SCAN"),
+                ("2", "Deep scan", "native checks + Docker recon tools", "SCAN"),
+                ("m", "Monitor", "live dashboard — run several scans at once", "SCAN"),
+                ("o", "OSINT / HUMINT", "passive footprint — domain · name · email · phone", "RECON"),
+                ("a", "API testing", "discover endpoints + bounded posture checks", "RECON"),
+                ("b", "Playbooks", "ordered recon → web → TLS recipe", "RECON"),
+                ("t", "Pentest", "pick tests + target(s) → one combined report", "RECON"),
+                ("3", "Run a tool", "one Kali tool with your own arguments", "TOOLS"),
+                ("4", "Kali shell", "interactive shell in a Kali container", "TOOLS"),
+                ("c", "Clients & scope", "manage clients, engagements & authorized targets", "MANAGE"),
+                ("p", "Doctor", "check Docker & pre-pull the tool images", "MANAGE"),
+                ("5", "What it checks", "list the checks temple-guard runs", "INFO"),
+                ("6", "Help", "commands & flags", "INFO"),
+                ("7", "Update", "pull the newest temple-guard from its repo", "SYSTEM"),
+                ("d", f"Dry-run: {'ON' if dry else 'OFF'}", "toggle preview-only mode for every action", "SYSTEM"),
+                ("q", "Quit", "or Esc / Ctrl+C", "SYSTEM"),
             ]
             choice = _pick("What would you like to do?", items, default="1")
 
