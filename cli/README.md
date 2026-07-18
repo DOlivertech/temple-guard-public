@@ -7,6 +7,26 @@ of which exploit, flood, or brute-force. Optionally, with **Docker**, it also ru
 defensive tools (`testssl`, `nmap`, `nuclei`, `nikto`, `wafw00f`, `whatweb`) and merges
 their findings into the same report.
 
+## Commands
+
+| Command | What it does |
+|---|---|
+| `temple-guard` | Interactive, fuzzy type-to-filter menu — every option in one place. |
+| `scan <url>` | Bounded, read-only self-scan → report (`--deep`, `--tools`, `-o`, `--json`, `-v`, `--dry-run`). `scan --pick` chooses a target from your authorized scope. |
+| `monitor <urls…>` | Run several scans at once in a live, btop-style dashboard. |
+| `tool <name> [args]` | Run one Docker tool with its full flag set — or an explainer with no args. |
+| `shell` | Drop into an interactive Kali container. |
+| `doctor [--pull]` | Check Docker readiness; `--pull` pre-fetches every tool image. |
+| `osint <domain · name · email · phone>` | Passive, read-only OSINT / HUMINT footprint of a domain, name, email, or phone. |
+| `apitest <url>` | Discover an API's endpoints, then run bounded, read-only posture checks. |
+| `client` · `scope` | Register clients → engagements → authorized scope (stored under `~/.temple-guard/clients`); scoped targets are pickable in `scan` / `playbook` / `pentest`. |
+| `playbook list` · `playbook run <id> <url>` | Ordered recon → web → TLS recipes. |
+| `pentest` | Pick any combination of bounded tests across one or more targets → one combined report. |
+| `update [--check]` | Self-update from the git repo. |
+| `version` | Print the installed version. |
+
+**Every** command takes `--dry-run` — it prints exactly what *would* happen and sends nothing.
+
 ## What it looks like
 
 A fuzzy, type-to-filter menu — start typing to narrow it down:
@@ -92,6 +112,7 @@ temple-guard                 # bare command launches it — or: temple-guard int
 **Direct** — scan straight away:
 ```bash
 temple-guard scan https://your-app.example.com                # colourful report
+temple-guard scan --pick                                      # pick a target from your authorized scope
 temple-guard scan https://your-app.example.com -v             # verbose: show each check + finding live
 temple-guard scan https://your-app.example.com --dry-run      # list the checks, send nothing
 temple-guard scan https://your-app.example.com -o report.html # collapsible HTML report (see formats below)
@@ -215,6 +236,67 @@ prints the tool's raw output. (Also available as "Run a tool" in the interactive
 Every tool comes with an explainer — what it is, how to use it, its risks, and the key flags:
 
 ![temple-guard tool explainer](docs/screenshots/cli-tool-explainer.png)
+
+## OSINT footprint — `osint`
+
+Map an org's **public** footprint the way an attacker would — passively and read-only, from
+open sources. Point it at a **domain, a name, an email, or a phone number**:
+```bash
+temple-guard osint example.com              # domain — subdomains, records, exposed surface
+temple-guard osint "Jane Doe"               # name — public profiles / mentions
+temple-guard osint jane@example.com         # email — exposure / breach surface
+temple-guard osint +15551234567             # phone — country, line type, public footprint
+temple-guard osint example.com --dry-run    # show what it would look up, fetch nothing
+```
+It only consults open sources — nothing intrusive. Use it to assess an exposure you're
+**authorized** to assess.
+
+## API testing — `apitest`
+
+Discover an API's endpoints (an OpenAPI/Swagger spec, or common-path probing), then run
+**bounded, read-only** posture checks against them:
+```bash
+temple-guard apitest https://api.example.com             # discover + bounded posture checks
+temple-guard apitest https://api.example.com --dry-run   # list what it would probe
+```
+Request bursts are hard-capped — never a flood. It flags unauthenticated access, missing
+rate limiting, verbose errors, and slow endpoints (OWASP API Security Top 10).
+
+## Playbooks — `playbook`
+
+Ordered recipes that chain the bounded checks in sequence — **recon → web → TLS** — and fold
+every finding into one report:
+```bash
+temple-guard playbook list                                    # the available recipes + their ids
+temple-guard playbook run <id> https://your-app.example.com   # run one against your app
+temple-guard playbook run <id> https://your-app.example.com --dry-run
+```
+Each step is one of the same read-only checks the CLI already runs — the playbook just
+sequences them.
+
+## Pentest — one combined report — `pentest`
+
+Pick **any combination** of the bounded tests and run them across **one or more targets**,
+then get a single combined report:
+```bash
+temple-guard pentest                                          # interactive: choose tests + targets
+temple-guard pentest https://a.example.com https://b.example.com -o report.html
+temple-guard pentest https://your-app.example.com --dry-run
+```
+Same bounded, read-only checks as everywhere else — just assembled into one pass and one
+deliverable.
+
+## Clients & scope — `client` / `scope`
+
+Keep your **authorized scope** in one place. Register clients, open engagements, and record
+the targets you're cleared to test — stored locally under `~/.temple-guard/clients`:
+```bash
+temple-guard client                 # register / manage clients + engagements
+temple-guard scope                  # view / edit an engagement's authorized scope
+temple-guard scan --pick            # pick a scoped target instead of typing a URL
+```
+Scoped targets become **pickable** in `scan`, `playbook`, and `pentest` — so you don't
+fat-finger a host you aren't cleared for.
 
 ## Dry run — preview any action
 

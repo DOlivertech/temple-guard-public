@@ -28,6 +28,26 @@ environments you own or have explicit, documented permission to test.
 
 ---
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Command-line self-scan — temple-guard](#command-line-self-scan--temple-guard)
+- [Quick start](#quick-start)
+- [How to use it](#how-to-use-it)
+- [Execution modes](#execution-modes)
+- [Data & backups](#data--backups)
+- [Search](#search)
+- [Safety & scope](#safety--scope)
+- [Extending](#extending)
+- [Ethical boundaries — what Temple Guard won't ship](#ethical-boundaries--what-temple-guard-wont-ship)
+- [Configuration](#configuration)
+- [Project layout](#project-layout)
+- [License](#license)
+
+---
+
 ## What it does
 
 Temple Guard turns a pentest practice into a dashboard. You register a **client**,
@@ -35,7 +55,7 @@ open an **engagement** with an authorized scope, pick the **audit standards** yo
 want to run as buttons (OWASP, NIST, CIS, PCI/HIPAA/SOC 2…), point it at the
 sandbox you've been granted, and run. It executes the right tools, collects
 findings with remediation guidance, draws the topology, and generates a
-client-ready report. You can do this for several clients simultaneously.
+client-ready report — for several clients simultaneously.
 
 ### Feature tour
 
@@ -126,7 +146,9 @@ Cluster view.
 
 ### Evidence & the client report
 Left: a dedicated **Evidence** section — each item classified by what was found, the proof,
-and the control it violates. Right: generate **client-ready reports** per engagement.
+and the control it violates. Right: generate **client-ready reports** per engagement —
+executive summary, risk breakdown, and every finding with remediation and linked compliance
+controls (print → PDF, or download a server-rendered PDF).
 
 <table>
 <tr>
@@ -134,9 +156,6 @@ and the control it violates. Right: generate **client-ready reports** per engage
 <td width="50%"><img src="docs/screenshots/reports.png" alt="Reports"/></td>
 </tr>
 </table>
-
-The rendered report — executive summary, risk breakdown, and every finding with remediation
-and linked compliance controls (print → PDF, or download a server-rendered PDF):
 
 ![Client report](docs/screenshots/report.png)
 
@@ -175,7 +194,7 @@ FastAPI · SQLModel/SQLite (Postgres-ready) · Docker · boto3.
 
 ---
 
-## Command-line self-scan — `temple-guard`
+## Command-line self-scan — temple-guard
 
 Want a fast, read-only remediation report for **your own** app without standing up
 the full platform? The bundled **`temple-guard`** CLI ([`cli/`](cli/)) runs bounded,
@@ -197,18 +216,36 @@ pipx install ./temple_guard-0.5.4-py3-none-any.whl   # or, once on PyPI: pipx in
 New to pipx, or on **macOS / Windows**? [`cli/README.md`](cli/README.md) has the
 per-platform setup (installing pipx, `ensurepath`).
 
-### Use
+### Scan
 ```bash
 temple-guard                                               # interactive, colourful session (all options)
 temple-guard scan https://your-app.example.com             # colourful terminal report
 temple-guard scan https://your-app.example.com -v          # verbose: each check + finding, live
 temple-guard scan https://your-app.example.com --deep      # + Docker tools (whatweb, wafw00f, testssl, nmap, nuclei)
+temple-guard scan --pick                                   # choose a target from your authorized scope
 temple-guard scan https://your-app.example.com --dry-run   # list the checks, send nothing
 temple-guard scan https://your-app.example.com -o report.html # collapsible HTML report (Print → PDF)
 temple-guard scan https://your-app.example.com -o report.pdf  # branded PDF (also .md / .json)
 temple-guard scan https://your-app.example.com --json      # machine-readable findings
 ```
 It exits non-zero when a **HIGH** finding is present, so it drops straight into CI.
+
+### The rest of the toolkit
+Every command is bounded and read-only:
+
+| Command | What it does |
+|---|---|
+| `monitor <urls…>` | Run several scans at once in a live, btop-style dashboard. |
+| `tool <name> [args]` | Run one Docker tool with its full flag set (or an explainer with no args). |
+| `shell` | Drop into an interactive Kali container. |
+| `doctor [--pull]` | Check Docker readiness — and `--pull` pre-fetches every tool image. |
+| `osint <domain · name · email · phone>` | Passive, read-only OSINT / HUMINT footprint of a domain, name, email, or phone. |
+| `apitest <url>` | Discover an API's endpoints, then run bounded, read-only posture checks. |
+| `client` · `scope` | Register clients → engagements → authorized scope (stored under `~/.temple-guard/clients`); scoped targets are pickable in `scan` / `playbook` / `pentest`. |
+| `playbook list` · `playbook run <id> <url>` | Ordered recon → web → TLS recipes. |
+| `pentest` | Pick any combination of bounded tests across one or more targets → one combined report. |
+| `update` · `version` | Self-update from the repo · print the version. |
+
 See [`cli/README.md`](cli/README.md) for the full reference.
 
 > ⚠️ **Authorized use only** — scan apps you own or have explicit written
@@ -341,7 +378,7 @@ controls the `docker run --network` for its scan containers:
   1. **Full-tunnel corporate VPNs** often work as-is (Docker Desktop forwards
      container traffic through the Mac's stack). Try a scan first.
   2. **VPN sidecar (turnkey)** — see below. Works on macOS *and* Linux.
-  3. **Run the engine on a Linux VM/jump host** that's on the VPN (option 1).
+  3. **Run the engine on a Linux VM/jump host** that's on the VPN.
 
 #### VPN sidecar — OpenVPN, WireGuard, or Tailscale
 [`scripts/vpn-sidecar.sh`](scripts/vpn-sidecar.sh) runs your VPN *inside* a
@@ -363,7 +400,7 @@ scripts/vpn-sidecar.sh status   # tunnel state / address
 scripts/vpn-sidecar.sh down     # tear it down when the engagement's over
 ```
 
-What this does and doesn't cover:
+What this covers:
 - **OpenVPN / WireGuard** — any `.ovpn` or `.conf` you can export. **Proton VPN**
   and **Mullvad** both export WireGuard/OpenVPN configs, so they work via those.
 - **Tailscale** — joins your tailnet with an auth key; with **`--exit-node`** it
@@ -373,15 +410,13 @@ What this does and doesn't cover:
 - **SSO/proprietary clients** (Cisco AnyConnect, Palo Alto GlobalProtect, the
   Proton *app* with its stealth protocol) **can't be containerized** — there's no
   config to hand a container. For those, run the engine on a **Linux jump host**
-  that's already on the VPN (option 1) and use `host` networking.
+  that's already on the VPN and use `host` networking.
 
 > There is no single Docker flag that "inherits your Mac's whole connection" — on
 > macOS the containers live in Docker Desktop's Linux VM, separate from macOS. The
-> sidecar (VPN in a container) and the Linux-jump-host (`host` networking) are the
+> sidecar (VPN in a container) and the Linux jump host (`host` networking) are the
 > two ways to truly route scans through your network path. `tg-vpn` is labelled
-> `templeguard`, so it also appears as a node in the Cluster view. (Verified: a
-> scan container launched with `--network container:tg-vpn` shares the sidecar's
-> exact netns.)
+> `templeguard`, so it also appears as a node in the Cluster view.
 
 > Only scan inside a client network you are **explicitly authorized** to test, and
 > keep the engagement's scope + rules-of-engagement window accurate — the scope
@@ -410,6 +445,8 @@ rclone copy backups remote:templeguard-backups
 To move an existing SQLite database to Postgres, point `TG_DATABASE_URL` at
 Postgres and re-seed, or export/import per table — the schema is identical.
 
+---
+
 ## Search
 
 A global search box in the sidebar finds **clients, engagements, findings,
@@ -418,15 +455,11 @@ straight to any of them.
 
 ![Global search](docs/screenshots/search.png)
 
-## Managing clients & scope
+---
 
-- **Clients** page: add, **edit**, or **delete** a client (delete cascades its
-  engagements + findings, with a confirm).
-- **Engagement** page: the authorization reference auto-fills per client
-  (`SOW-YEAR-INITIALS-NNN`), and the **authorized scope is editable inline** —
-  chips with fuzzy autocomplete, plus the `*` wildcard.
+## Safety & scope
 
-## Safety model
+Temple Guard's guarantees on **every** scan:
 
 1. **Client authorization gate** — a client must be `authorized` before any scan.
 2. **Scope enforcement** — every target is checked against the engagement's
@@ -436,6 +469,14 @@ straight to any of them.
    `authorized_until` for the audit trail.
 4. **Cloud is opt-in** — the AWS provisioner never launches anything unless you
    explicitly configure it.
+
+Managing clients & scope in the UI:
+
+- **Clients** page: add, **edit**, or **delete** a client (delete cascades its
+  engagements + findings, with a confirm).
+- **Engagement** page: the authorization reference auto-fills per client
+  (`SOW-YEAR-INITIALS-NNN`), and the **authorized scope is editable inline** —
+  chips with fuzzy autocomplete, plus the `*` wildcard.
 
 ---
 
@@ -477,6 +518,8 @@ that image (as Metasploit does). High-value tools **not yet wired**, by category
 | SAST | `returntocorp/semgrep` | Static analysis of source |
 | Cloud posture | Prowler, ScoutSuite | AWS/Azure/GCP misconfig audits (pairs with the cloud-VM roadmap) |
 | Kubernetes | `aquasec/kube-bench`, `aquasec/kube-hunter` | CIS k8s + cluster attack surface |
+
+---
 
 ## Ethical boundaries — what Temple Guard won't ship
 
