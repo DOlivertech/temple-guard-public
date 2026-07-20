@@ -1323,7 +1323,7 @@ def strix_cmd(
     """Autonomous vulnerability **validation** — confirm real weaknesses in an app you own,
     prove they're genuine, and get prioritized remediation (powered by a user-installed Strix).
 
-    temple-guard strix https://app.example.com                  validate live (private build)
+    temple-guard strix https://app.example.com                  validate live (hosted feature)
     temple-guard strix https://app.example.com --scan-mode standard
     temple-guard strix . --scope-mode diff --diff-base main      validate only what changed
     temple-guard strix https://app.example.com --dry-run         print the command, run nothing
@@ -1337,7 +1337,7 @@ def strix_cmd(
         _strix_import(path, report=report, json_out=json_out, no_anim=no_anim)
         return
 
-    # Launch tier (§6.3 / §10): without the private strix_ext unlock we NEVER spawn strix.
+    # This build imports reports only — the launch path is never taken (STRIX_CAN_LAUNCH is False).
     if not _strix.STRIX_CAN_LAUNCH:
         console.print(Text.assemble(
             ("Live Strix validation is a private-build / hosted feature.", "bold #fbbf24")))
@@ -1429,7 +1429,7 @@ def _strix_import_flow(dry: bool = False) -> None:
 
 
 def _strix_flow(dry: bool = False) -> None:
-    """Menu flow: validate a target live (private build) or import an existing report."""
+    """Menu flow: validate a target live (hosted feature) or import an existing report."""
     from . import strix as _strix
     from . import clients
     if _strix.STRIX_CAN_LAUNCH:

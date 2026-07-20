@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); releases are tag
 `vMAJOR.MINOR.PATCH` and published on GitHub Releases. **When cutting a release, use
 that version's section below as the release notes** (see [AGENTS.md](AGENTS.md) → Releasing).
 
+## [0.8.0] — 2026-07-19
+### Added
+- **Strix vulnerability validation — import** (`temple-guard strix import <path>`). Ingest a
+  [Strix](https://github.com/usestrix/strix) run — its `strix_runs/<name>/vulnerabilities.json` (or the
+  SARIF sidecar) — and render it as prioritized **remediation** in the Temple Guard report: each
+  validated weakness mapped to a severity + category with a fix, PoC kept as collapsible evidence.
+  Strix autonomously finds and *validates* real weaknesses in an app you own so you can harden them;
+  you run Strix yourself, then bring the results here. **Live, in-app validation is a private-build /
+  hosted feature — this build is import-only** (it never launches the validation engine).
+
 ## [0.7.0] — 2026-07-17
 ### Added
 - **OSINT / HUMINT footprint** — `temple-guard osint <domain · name · email · phone>` runs passive,

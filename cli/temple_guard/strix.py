@@ -15,12 +15,8 @@ Two entry points:
 * ``import_report(path)`` — **ingest** an existing ``strix_runs/`` output (both builds).
   Touches no target, needs no gate — it renders a report someone else produced.
 
-**Launch tier is code-enforced (§6.3 / §10).** Strix has no non-executing mode, so
-the public build must never spawn ``strix``; it only imports. The private build ships
-``strix_ext.py``, whose presence flips ``STRIX_CAN_LAUNCH`` on:
-
-    try:      from . import strix_ext;  STRIX_CAN_LAUNCH = True     # private → live
-    except Exception:                    STRIX_CAN_LAUNCH = False    # public → import-only
+**This build imports reports only** — ``STRIX_CAN_LAUNCH`` is False, so it never spawns
+``strix``. Live, in-app validation is a hosted feature.
 
 **Credentials** for the LLM that drives Strix come from the environment
 (``STRIX_LLM`` + ``LLM_API_KEY``, optional ``LLM_API_BASE``) and are injected into the
@@ -45,16 +41,10 @@ from urllib.parse import urlparse
 
 from .checks import Finding, ScanResult
 
-# ── launch gate (private-only unlock — §6.3 / §10) ─────────────────────────────
-try:  # private build ships strix_ext.py → live launch allowed
-    from . import strix_ext as _strix_ext  # noqa: F401
-    STRIX_CAN_LAUNCH = True
-except Exception:  # noqa: BLE001 — public build: no strix_ext → import/render only
-    _strix_ext = None
-    STRIX_CAN_LAUNCH = False
-
-# Monitor / UI wording: "validate" when live launch is unlocked, else "detect-only".
-MONITOR_VERB = getattr(_strix_ext, "MONITOR_PROFILE_VERB", "detect-only") if STRIX_CAN_LAUNCH else "detect-only"
+# ── launch gate ────────────────────────────────────────────────────────────────
+# This build imports reports only; live, in-app validation is a hosted feature.
+STRIX_CAN_LAUNCH = False
+MONITOR_VERB = "detect-only"
 
 # ── credential storage (~/.temple-guard/llm.json, chmod 600) ───────────────────
 TG_HOME = Path.home() / ".temple-guard"

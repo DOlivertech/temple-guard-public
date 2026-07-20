@@ -28,7 +28,7 @@ from rich.text import Text
 from . import tools as _tools
 from .checks import CHECK_PLAN, scan as run_scan
 from .report import BLUE, PURPLE
-from .strix import STRIX_CAN_LAUNCH  # shared gate — True only when strix_ext is present (private build)
+from .strix import STRIX_CAN_LAUNCH  # False in this build → the live-validation profile is hidden
 
 # Extension point for build-specific scan profiles. None in this build → defensive profiles only.
 _ext = None
@@ -156,7 +156,7 @@ class TaskManager:
         if t.kind == "osint":                        # passive OSINT/recon tools (no native web checks)
             self._run_recon(t)
             return
-        if t.kind == "strix":                        # live Strix validation (private build only)
+        if t.kind == "strix":                        # live Strix validation (hosted feature)
             self._run_strix(t)
             return
         t.status = "running"
@@ -315,7 +315,7 @@ class TaskManager:
 
     def _run_strix(self, t: Task) -> None:
         """Run a live Strix validation as a monitor task and fold its findings into the
-        report. Gated on STRIX_CAN_LAUNCH (private build); honors t._stop (the runner
+        report. Gated on STRIX_CAN_LAUNCH; honors t._stop (the runner
         tears down its subprocess). Findings are parsed at the end of the run."""
         t.status = "running"
         t.started = time.monotonic()
