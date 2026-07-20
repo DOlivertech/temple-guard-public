@@ -166,9 +166,9 @@ def strix_version() -> tuple[bool, str]:
 
 def strix_hint() -> str:
     """Actionable install guidance, mirroring tools.docker_hint()."""
-    return ("Install Strix — `pipx install strix-agent` (🔍 verify the package name) "
-            "or `curl -sSL https://strix.ai/install | bash`. It runs the validation "
-            "engine in its own Docker sandbox, so Docker must be running too.")
+    return ("Install Strix — `pipx install strix-agent` (or `curl -sSL https://strix.ai/install | bash`). "
+            "It runs the validation engine in its own Docker sandbox, so Docker must be running too. "
+            "`doctor` can install it for you.")
 
 
 def preflight(docker_ok: bool) -> list:
@@ -182,6 +182,41 @@ def preflight(docker_ok: bool) -> list:
         ("LLM provider", llm_ok, llm_detail,
          ("" if llm_ok else "Connect a model provider:  temple-guard config llm")),
     ]
+
+
+def install_strix() -> tuple[bool, str]:
+    """Install Strix via pipx (isolated, on PATH). Returns (ok, message). Used by `doctor`."""
+    import shutil
+    pipx = shutil.which("pipx")
+    if not pipx:
+        return False, ("pipx not found — install pipx first (`python3 -m pip install --user pipx`), "
+                       "then re-run `doctor`.")
+    try:
+        p = subprocess.run([pipx, "install", "strix-agent"], capture_output=True, text=True, timeout=900)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"install did not start: {str(exc)[:80]}"
+    blob = ((p.stdout or "") + (p.stderr or "")).lower()
+    if p.returncode == 0 or "already seems to be installed" in blob:
+        ok, ver = strix_version()
+        return ok, (ver if ok else "installed — run `pipx ensurepath` and reopen your shell to get `strix` on PATH")
+    tail = (p.stderr or p.stdout).strip().splitlines()
+    return False, (tail[-1][:140] if tail else "`pipx install strix-agent` failed")
+
+
+def pull_sandbox() -> tuple[bool, str]:
+    """Pre-pull Strix's Docker sandbox image so the first validation isn't slow. (ok, message)."""
+    import shutil
+    docker = shutil.which("docker")
+    if not docker:
+        return False, "docker not found"
+    try:
+        p = subprocess.run([docker, "pull", SANDBOX_IMAGE], capture_output=True, text=True, timeout=1800)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"pull did not start: {str(exc)[:80]}"
+    if p.returncode == 0:
+        return True, f"{SANDBOX_IMAGE} ready"
+    tail = (p.stderr or p.stdout).strip().splitlines()
+    return False, (tail[-1][:140] if tail else "pull failed")
 
 
 # ── invocation builder (defensive framing; keys NEVER go on argv) ──────────────

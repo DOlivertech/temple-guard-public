@@ -966,7 +966,7 @@ def _monitor_flow() -> None:
     _mon.run([], workers=4)
 
 
-def _strix_doctor(docker_ok: bool) -> None:
+def _strix_doctor(docker_ok: bool, pull: bool = False) -> None:
     """Strix preflight section for `doctor`: is strix on PATH? Docker running? an LLM
     provider connected? Each with actionable guidance (mirrors tools.docker_hint())."""
     from . import strix as _strix
@@ -977,12 +977,29 @@ def _strix_doctor(docker_ok: bool) -> None:
             ("live validation is a private-build / hosted feature — this build imports reports only "
              "(temple-guard strix import <path>).", "dim")))
         return
-    for name, okr, detail, hint in _strix.preflight(docker_ok):
+    rows = _strix.preflight(docker_ok)
+    for name, okr, detail, hint in rows:
         console.print(Text.assemble(
             ("    " + ("✓ " if okr else "○ "), f"{'#4ade80' if okr else '#fbbf24'}"),
             (f"{name:<16}", "white"), (detail, "dim")))
         if not okr and hint:
             console.print(Text.assemble(("        → ", f"bold {BLUE}"), (hint, "dim")))
+    installed = rows[0][1]
+    interactive = sys.stdin.isatty() and console.is_terminal
+    if not installed and (pull or (interactive and Confirm.ask(
+            "    [#fbbf24]Install Strix now?[/] [dim](pipx install strix-agent)[/]", default=True))):
+        with console.status("[#a78bfa]installing Strix (pipx install strix-agent)…", spinner="dots"):
+            ok, msg = _strix.install_strix()
+        console.print(Text.assemble(("    " + ("✓ " if ok else "✗ "), f"bold {'#4ade80' if ok else '#f87171'}"),
+                                    ("strix  ", "white"), (msg, "dim")))
+        installed = ok
+    if installed and docker_ok and (pull or (interactive and Confirm.ask(
+            "    [#fbbf24]Pre-pull Strix's sandbox image now?[/] [dim](first run is slow otherwise)[/]",
+            default=False))):
+        with console.status(f"[#a78bfa]pulling {_strix.SANDBOX_IMAGE}…", spinner="dots"):
+            ok, msg = _strix.pull_sandbox()
+        console.print(Text.assemble(("    " + ("✓ " if ok else "✗ "), f"bold {'#4ade80' if ok else '#f87171'}"),
+                                    ("sandbox  ", "white"), (msg, "dim")))
 
 
 def _doctor(pull: bool = False) -> None:
@@ -994,7 +1011,7 @@ def _doctor(pull: bool = False) -> None:
                                 ("✓ always available (no Docker needed)", "#4ade80")))
     console.print(Text.assemble(("  docker          ", "white"),
                                 (("✓ ready" if ok else f"✗ {why}"), f"bold {'#4ade80' if ok else '#f87171'}")))
-    _strix_doctor(ok)
+    _strix_doctor(ok, pull=pull)
     if not ok:
         console.print(Text.assemble(("\n  → ", f"bold {BLUE}"), (tools.docker_hint(), "white")))
         console.print(Text("\n  Native scans still work:  temple-guard scan <url>", style="dim"))
