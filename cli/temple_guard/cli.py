@@ -616,6 +616,13 @@ _COMMANDS = [
     ("temple-guard tool nmap -h", "the tool's own help / full options"),
     ("temple-guard osint <target>", "OSINT / HUMINT footprint — domain · name · email · phone"),
     ("temple-guard apitest <url>", "discover API endpoints + bounded posture checks"),
+    ("temple-guard strix <target>", "autonomous vulnerability validation (Strix, live)"),
+    ("temple-guard strix <target> --scan-mode standard", "fuller validation pass"),
+    ("temple-guard strix <target> --scan-mode deep --budget 5", "deep pass, cap LLM spend at $5"),
+    ("temple-guard strix <target> --scope-mode diff --diff-base main", "validate only what changed (pre-merge)"),
+    ("temple-guard strix <target> --dry-run", "print the strix command (key redacted), run nothing"),
+    ("temple-guard strix import <path>", "ingest a strix_runs/ report → remediation"),
+    ("temple-guard config llm", "connect an LLM provider for Strix (OAuth / API key)"),
     ("temple-guard client", "manage clients · engagements · authorized scope"),
     ("temple-guard scope list", "list every authorized in-scope target"),
     ("temple-guard playbook list", "list the ordered scan recipes"),
@@ -959,6 +966,25 @@ def _monitor_flow() -> None:
     _mon.run([], workers=4)
 
 
+def _strix_doctor(docker_ok: bool) -> None:
+    """Strix preflight section for `doctor`: is strix on PATH? Docker running? an LLM
+    provider connected? Each with actionable guidance (mirrors tools.docker_hint())."""
+    from . import strix as _strix
+    console.print(Text("\n  Strix — autonomous vulnerability validation:", style="white"))
+    if not _strix.STRIX_CAN_LAUNCH:
+        console.print(Text.assemble(
+            ("    ○ ", "#fbbf24"),
+            ("live validation is a private-build / hosted feature — this build imports reports only "
+             "(temple-guard strix import <path>).", "dim")))
+        return
+    for name, okr, detail, hint in _strix.preflight(docker_ok):
+        console.print(Text.assemble(
+            ("    " + ("✓ " if okr else "○ "), f"{'#4ade80' if okr else '#fbbf24'}"),
+            (f"{name:<16}", "white"), (detail, "dim")))
+        if not okr and hint:
+            console.print(Text.assemble(("        → ", f"bold {BLUE}"), (hint, "dim")))
+
+
 def _doctor(pull: bool = False) -> None:
     """Check Docker readiness + tool-image status; optionally pull the missing images."""
     from rich.prompt import Confirm
@@ -968,6 +994,7 @@ def _doctor(pull: bool = False) -> None:
                                 ("✓ always available (no Docker needed)", "#4ade80")))
     console.print(Text.assemble(("  docker          ", "white"),
                                 (("✓ ready" if ok else f"✗ {why}"), f"bold {'#4ade80' if ok else '#f87171'}")))
+    _strix_doctor(ok)
     if not ok:
         console.print(Text.assemble(("\n  → ", f"bold {BLUE}"), (tools.docker_hint(), "white")))
         console.print(Text("\n  Native scans still work:  temple-guard scan <url>", style="dim"))
@@ -1184,6 +1211,353 @@ def apitest_cmd(
 # ── clients / engagements / authorized scope ──────────────────────────────────
 client_app = typer.Typer(add_completion=False, no_args_is_help=False,
                          help="Manage clients, engagements & authorized scope.")
+# ── Strix — autonomous vulnerability validation (defensive) ───────────────────
+def _strix_dry_run(target: str, *, scan_mode: str, scope_mode: str, diff_base: str,
+                   instruction: str, budget=None, mount: str = None) -> None:
+    """Print the exact `strix` invocation (+ the env it would inject, KEY REDACTED),
+    and run nothing. Credentials go via env at spawn, never on argv."""
+    from . import strix as _strix
+    argv = _strix.strix_argv(target, scan_mode=scan_mode, scope_mode=scope_mode,
+                             diff_base=diff_base, instruction=instruction, budget=budget, mount=mount)
+    _dry_cmd("Strix validation", argv)
+    env = _strix.redacted_env_display()
+    if env:
+        console.print(Text("  env (injected at spawn — never on the command line):", style="dim"))
+        for k, v in env.items():
+            console.print(Text.assemble(("    ", ""), (f"{k}=", f"{BLUE}"), (v, "dim")))
+    else:
+        console.print(Text("  (no provider connected yet — run `temple-guard config llm`)", style="dim"))
+    console.print(Text("  ↑ credentials are passed via environment, not the command line.", style="dim italic"))
+
+
+def _run_strix_live(target: str, *, scan_mode: str, scope_mode: str, diff_base: str,
+                    instruction: str, budget=None, mount: str = None, quiet: bool = False):
+    """Run Strix live behind a spinner (mirrors `_live_tool`) whose label tracks the
+    current phase, starting with a 'pulling sandbox image' phase on first run.
+    Parsed findings print above the bar as they land."""
+    from . import strix as _strix
+    if quiet:
+        return _strix.run_strix(target, scan_mode=scan_mode, scope_mode=scope_mode,
+                                diff_base=diff_base, instruction=instruction, budget=budget, mount=mount)
+    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+    with Progress(SpinnerColumn(style=PURPLE), TextColumn("{task.description}"),
+                  TimeElapsedColumn(), console=console, transient=True) as prog:
+        task = prog.add_task("[bold white]Strix validation[/]  ·  starting…", total=None)
+
+        def on_event(kind: str, **k) -> None:
+            if kind == "phase":
+                prog.update(task, description=f"[bold white]Strix validation[/]  ·  {k.get('name', '…')}")
+            elif kind == "finding":
+                f = k["finding"]
+                prog.console.print(Text.assemble(
+                    (f"  {f.severity.upper():4} ", SEV_STYLE.get(f.severity, "dim")),
+                    (f.title[:74], "white")))
+            elif kind == "error":
+                prog.console.print(Text.assemble(("  ✗ ", "bold #f87171"), (k.get("message", "")[:110], "#f87171")))
+
+        return _strix.run_strix(target, scan_mode=scan_mode, scope_mode=scope_mode,
+                                diff_base=diff_base, instruction=instruction, budget=budget,
+                                mount=mount, on_event=on_event)
+
+
+def _strix_import(path, *, report=None, json_out: bool = False, no_anim: bool = False) -> None:
+    """`strix import <path>` — ingest an existing strix_runs/ output → remediation view.
+    Available in BOTH builds (touches no target)."""
+    from . import strix as _strix
+    if not path:
+        console.print("[#f87171]Usage: temple-guard strix import <strix_runs path>[/]")
+        console.print("[dim]  Point it at a strix_runs/<run-name>/ directory (or a findings .json / .md).[/]")
+        raise typer.Exit(1)
+    result = _strix.import_report(str(path))
+    if json_out:
+        print(json.dumps(_result_dict(result), indent=2))
+        raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+    _banner(animate=not no_anim)
+    _authz_notice()
+    console.print(Text.assemble(("\nImported Strix report  ", f"bold {PURPLE}"), (str(path), "dim")))
+    console.print()
+    render(result, console)
+    if report:
+        _write_report(result, Path(report))
+    raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+
+
+@app.command("strix")
+def strix_cmd(
+    target: str = typer.Argument(None, help="Target to validate (URL / directory / git-repo) — your own / authorized. "
+                                            "Use `strix import <path>` to ingest an existing report instead."),
+    path: str = typer.Argument(None, help="With `import`: the strix_runs/ report path to ingest."),
+    pick: bool = typer.Option(False, "--pick", help="Pick the target from your authorized scope."),
+    scan_mode: str = typer.Option("quick", "--scan-mode", "-m",
+                                  help="quick (lighter, default) | standard (fuller) | deep (exhaustive)."),
+    scope_mode: str = typer.Option(None, "--scope-mode",
+                                   help="auto (default) | diff (only what changed — pre-merge/PR) | full."),
+    diff_base: str = typer.Option(None, "--diff-base", help="Base branch for --scope-mode diff (e.g. main)."),
+    instruction: str = typer.Option(None, "--instruction", help="Natural-language focus for the validation."),
+    budget: float = typer.Option(None, "--budget", help="LLM cost cap in USD (Strix --max-budget-usd)."),
+    mount: str = typer.Option(None, "--mount",
+                              help="Read-only mount a local code repo into the sandbox (local targets)."),
+    report: Path = typer.Option(None, "--report", "-o", help="Write a report (.html/.pdf/.md/.json)."),
+    json_out: bool = typer.Option(False, "--json", help="Emit findings as JSON (no styling)."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Print the exact strix invocation (key redacted); run nothing."),
+    no_anim: bool = typer.Option(False, "--no-anim", help="Disable the banner animation."),
+):
+    """Autonomous vulnerability **validation** — confirm real weaknesses in an app you own,
+    prove they're genuine, and get prioritized remediation (powered by a user-installed Strix).
+
+    temple-guard strix https://app.example.com                  validate live (private build)
+    temple-guard strix https://app.example.com --scan-mode standard
+    temple-guard strix . --scope-mode diff --diff-base main      validate only what changed
+    temple-guard strix https://app.example.com --dry-run         print the command, run nothing
+    temple-guard strix import ./strix_runs/my-run               ingest a report → remediation
+    """
+    from . import strix as _strix
+
+    # `strix import <path>` — emulated subcommand (Typer groups can't carry a positional
+    # target alongside real subcommands). Works in BOTH builds.
+    if target == "import":
+        _strix_import(path, report=report, json_out=json_out, no_anim=no_anim)
+        return
+
+    # Launch tier (§6.3 / §10): without the private strix_ext unlock we NEVER spawn strix.
+    if not _strix.STRIX_CAN_LAUNCH:
+        console.print(Text.assemble(
+            ("Live Strix validation is a private-build / hosted feature.", "bold #fbbf24")))
+        console.print(Text.assemble(
+            ("  In this build you can ingest a report you generated elsewhere:  ", "dim"),
+            ("temple-guard strix import <path>", f"bold {BLUE}")))
+        raise typer.Exit(0)
+
+    if pick or (not target and not json_out):
+        from . import clients
+        chosen = clients.pick_target(console)
+        if not chosen:
+            raise typer.Exit()
+        target = chosen
+    if not target:
+        console.print("[#f87171]No target — pass one or use --pick to choose from your scope.[/]")
+        raise typer.Exit(1)
+    if scan_mode not in _strix.SCAN_MODES:
+        console.print(f"[#f87171]--scan-mode must be one of: {', '.join(_strix.SCAN_MODES)}[/]")
+        raise typer.Exit(1)
+    if scope_mode is not None and scope_mode not in _strix.SCOPE_MODES:
+        console.print(f"[#f87171]--scope-mode must be one of: {', '.join(_strix.SCOPE_MODES)}[/]")
+        raise typer.Exit(1)
+
+    if not json_out:
+        _banner(animate=not no_anim and not dry_run)
+        _authz_notice()
+        console.print()
+
+    if dry_run:
+        _strix_dry_run(target, scan_mode=scan_mode, scope_mode=scope_mode,
+                       diff_base=diff_base, instruction=instruction, budget=budget, mount=mount)
+        raise typer.Exit()
+
+    # Preflight the launch path (mirror tools.docker_hint style guidance).
+    if not _strix.strix_path():
+        console.print(Text.assemble(("✗ Strix not installed: ", "bold #f87171"),
+                                    (_strix.strix_hint(), "dim")))
+        raise typer.Exit(1)
+    llm_ok, _llm = _strix.llm_status()
+    if not llm_ok:
+        console.print(Text.assemble(("✗ No LLM provider connected. ", "bold #f87171"),
+                                    ("Connect one:  ", "dim"), ("temple-guard config llm", f"bold {BLUE}")))
+        raise typer.Exit(1)
+
+    # Consent gate (§6.4) — a live validation EXECUTES against the target, distinct from a read-only
+    # scan; the wording escalates with scan-mode and surfaces the $ budget cap.
+    provider = _strix.llm_env().get("STRIX_LLM") or "the connected provider"
+    if not json_out:
+        depth = {"quick": "a lighter pass", "standard": "a fuller pass",
+                 "deep": "a deep, exhaustive pass"}.get(scan_mode, "a pass")
+        budget_note = f", capped at ${budget}" if budget is not None else ""
+        console.print(Text.assemble(
+            ("⚠ ", "bold #fbbf24"),
+            (f"Strix will run live in its own sandbox against {target} ({depth}{budget_note}) and send "
+             f"its data to {provider} to validate findings.", "italic #fbbf24")))
+        if not Confirm.ask("[#fbbf24]I own or am authorized to test this target. Validate it?[/]", default=False):
+            console.print("[dim]Cancelled — nothing was launched.[/]")
+            raise typer.Exit()
+
+    result = _run_strix_live(target, scan_mode=scan_mode, scope_mode=scope_mode,
+                             diff_base=diff_base, instruction=instruction, budget=budget,
+                             mount=mount, quiet=json_out)
+    if json_out:
+        print(json.dumps(_result_dict(result), indent=2))
+        raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+    console.print()
+    render(result, console)
+    if report:
+        _write_report(result, report)
+    raise typer.Exit(code=1 if result.by_severity.get("high") else 0)
+
+
+def _strix_import_flow(dry: bool = False) -> None:
+    """Menu flow: ingest an existing strix_runs/ report → remediation view."""
+    from . import strix as _strix
+    raw = Prompt.ask(f"[{BLUE}]Path to a Strix report[/] "
+                     f"[dim](a strix_runs/<run> dir, or a .json/.md — blank = back)[/]").strip()
+    if not raw:
+        console.print("[dim]No path — back to the menu.[/]")
+        return
+    if dry:
+        console.print(Text.assemble(("\nWould ingest ", "dim"), (raw, f"bold {BLUE}"),
+                                    (" → remediation report — nothing sent.", "dim")))
+        return
+    result = _strix.import_report(raw)
+    console.print()
+    render(result, console)
+
+
+def _strix_flow(dry: bool = False) -> None:
+    """Menu flow: validate a target live (private build) or import an existing report."""
+    from . import strix as _strix
+    from . import clients
+    if _strix.STRIX_CAN_LAUNCH:
+        which = _pick("Strix — validate & harden:", [
+            ("validate", "Validate a target", "run Strix live in its sandbox → proven findings + fixes"),
+            ("import", "Import a report", "ingest an existing strix_runs/ output → remediation"),
+            ("__back__", "← Back", ""),
+        ], default="validate")
+        if not which or which == "__back__":
+            return
+    else:
+        console.print(Text("Live validation is a private-build / hosted feature — importing an existing report.",
+                           style="dim"))
+        which = "import"
+    if which == "import":
+        _strix_import_flow(dry)
+        return
+
+    # validate (launch) flow
+    url = ""
+    if clients.all_targets():
+        console.print(Text.assemble(("  Tip: ", f"bold {BLUE}"),
+                      ("pick from your authorized scope, or choose Back to type a target.", "dim")))
+        url = clients.pick_target(console) or ""
+    if not url:
+        url = Prompt.ask(f"[{BLUE}]Target to validate[/] "
+                         f"[dim](URL / dir / git-repo — blank = back)[/]").strip()
+    if not url:
+        console.print("[dim]No target — back to the menu.[/]")
+        return
+    # Strix accepts a URL, a local directory, or a git-repo URL — only tidy a bare web host.
+    first = url.split("/", 1)[0]
+    if "://" not in url and "." in first and not Path(url).exists():
+        url = _norm_target(url, "url")
+    mode = Prompt.ask("Scan mode", choices=["quick", "standard", "deep"], default="quick")
+    instruction = Prompt.ask("[dim]Focus / instruction (optional — blank for none)[/]", default="").strip() or None
+    budget_raw = Prompt.ask("[dim]LLM budget cap in USD (optional — blank for none)[/]", default="").strip()
+    try:
+        budget = float(budget_raw) if budget_raw else None
+    except ValueError:
+        budget = None
+    if dry:
+        console.print()
+        _strix_dry_run(url, scan_mode=mode, scope_mode=None, diff_base=None,
+                       instruction=instruction, budget=budget)
+        return
+    if not _strix.strix_path():
+        console.print(Text.assemble(("✗ Strix not installed: ", "bold #f87171"), (_strix.strix_hint(), "dim")))
+        return
+    llm_ok, _llm = _strix.llm_status()
+    if not llm_ok:
+        console.print(Text.assemble(("✗ No LLM provider connected. ", "bold #f87171"),
+                                    ("Connect one:  ", "dim"), ("temple-guard config llm", f"bold {BLUE}")))
+        return
+    provider = _strix.llm_env().get("STRIX_LLM") or "the connected provider"
+    depth = {"quick": "a lighter pass", "standard": "a fuller pass",
+             "deep": "a deep, exhaustive pass"}.get(mode, "a pass")
+    budget_note = f", capped at ${budget}" if budget is not None else ""
+    console.print(Text.assemble(
+        ("⚠ ", "bold #fbbf24"),
+        (f"Strix will run live in its own sandbox against {url} ({depth}{budget_note}) and send its "
+         f"data to {provider}.", "italic #fbbf24")))
+    if not Confirm.ask("[#fbbf24]I own or am authorized to test this target. Validate it?[/]", default=False):
+        console.print("[dim]Cancelled — nothing was launched.[/]")
+        return
+    console.print()
+    result = _run_strix_live(url, scan_mode=mode, scope_mode=None, diff_base=None,
+                             instruction=instruction, budget=budget)
+    console.print()
+    render(result, console)
+
+
+# ── config — model providers & credentials (for Strix) ────────────────────────
+config_app = typer.Typer(add_completion=False, no_args_is_help=True,
+                         help="Configure model providers & credentials for Strix validation.")
+app.add_typer(config_app, name="config")
+
+
+def _config_llm_flow() -> None:
+    """Interactive: pick a provider → (OAuth-first scaffold) → paste an API key →
+    store securely at ~/.temple-guard/llm.json (chmod 600). The key is never logged."""
+    from datetime import datetime, timezone
+
+    from . import strix as _strix
+    console.print(Text("\nConnect a model provider for Strix validation", style=f"bold {PURPLE}"))
+    console.print(Text("  Strix sends your app's data to this provider to power validation. Credentials are "
+                       "stored at ~/.temple-guard/llm.json (chmod 600) and never logged.", style="dim"))
+    items = [(k, label, model) for k, label, model, _url, _nb in _strix.PROVIDERS]
+    items.append(("__back__", "← Back", ""))
+    key = _pick("Which provider?", items, default="anthropic")
+    if not key or key == "__back__":
+        return
+    _pk, label, default_model, url, needs_base = next(p for p in _strix.PROVIDERS if p[0] == key)
+
+    # OAuth-first scaffold — Anthropic first (§4.2). Not built yet (needs live verification);
+    # the API-key paste path below fully works today.
+    if key in _strix.OAUTH_FIRST:
+        console.print(Text.assemble(("\n  ", ""), (label, "bold white")))
+        # TODO(oauth): bridge OAuth->API key, Anthropic first (§4.2). Ship OAuth device/sign-in
+        # flow here, then set LLM_API_KEY from the resulting credential; verify LiteLLM/Strix
+        # accepts it. Until then, fall through to the key-paste path.
+        console.print(Text("  OAuth sign-in (like Claude Code) is coming soon; paste an API key for now.",
+                           style="dim italic"))
+    if url:
+        console.print(Text.assemble(("  Get a key: ", "dim"), (url, f"{BLUE}")))
+
+    model = Prompt.ask(f"[{BLUE}]Model[/] [dim](STRIX_LLM — LiteLLM `provider/model`)[/]",
+                       default=default_model).strip() or default_model
+    api_base = None
+    if needs_base:
+        api_base = Prompt.ask(f"[{BLUE}]API base URL[/] "
+                              f"[dim](e.g. http://localhost:11434 for Ollama; blank = provider default)[/]",
+                              default="").strip() or None
+    # password=True hides input; the value is never echoed or logged.
+    api_key = Prompt.ask(f"[{BLUE}]API key[/] [dim](paste — hidden; stored 0600, never logged)[/]",
+                         password=True).strip()
+    if key == "local" and not api_key:
+        api_key = "ollama"  # local endpoints ignore the key; a placeholder keeps the pipeline valid
+    if not api_key:
+        console.print("[#f87171]No key entered — nothing saved.[/]")
+        return
+
+    cfg = {"provider": key, "model": model, "api_key": api_key, "api_base": api_base,
+           "updated": datetime.now(timezone.utc).isoformat()}
+    path = _strix.save_llm_config(cfg)
+    console.print(Text.assemble(("\n✓ saved ", "bold #4ade80"), (label, "bold white"),
+                                (f"   → {path}  (chmod 600)", "dim")))
+    console.print(Text.assemble(("  model  ", "dim"), (model, f"{BLUE}")))
+    console.print(Text("  Verify:  temple-guard doctor", style="dim"))
+
+
+@config_app.command("llm")
+def config_llm():
+    """Connect an LLM provider for Strix — OAuth-first where available, API-key paste fallback.
+
+    temple-guard config llm       # pick a provider, paste a key, stored 0600
+    """
+    _config_llm_flow()
+
+
+# ── clients / engagements / authorized scope ──────────────────────────────────
+client_app = typer.Typer(add_completion=False, no_args_is_help=False,
+                         help="Manage clients, engagements & authorized scope.")
+
+
 app.add_typer(client_app, name="client")
 
 
@@ -1605,6 +1979,7 @@ def interactive() -> None:
                 ("a", "API testing", "discover endpoints + bounded posture checks", "RECON"),
                 ("b", "Playbooks", "ordered recon → web → TLS recipe", "RECON"),
                 ("t", "Pentest", "pick tests + target(s) → one combined report", "RECON"),
+                ("v", "Strix validate", "autonomous vulnerability validation → proven findings + fixes", "VALIDATE"),
                 ("3", "Run a tool", "one Kali tool with your own arguments", "TOOLS"),
                 ("4", "Kali shell", "interactive shell in a Kali container", "TOOLS"),
                 ("c", "Clients & scope", "manage clients, engagements & authorized targets", "MANAGE"),
@@ -1645,6 +2020,8 @@ def interactive() -> None:
                 _playbook_flow(dry=dry)
             elif choice == "t":
                 _pentest_flow(dry=dry)
+            elif choice == "v":
+                _strix_flow(dry=dry)
             elif choice == "p":
                 _doctor()
             elif choice == "5":

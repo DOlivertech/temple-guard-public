@@ -22,7 +22,10 @@ CAT_ICON = {"transport": "🔒", "headers": "📋", "cookies": "🍪",
             "email": "📧", "tls": "🔐", "ports": "🔌", "templates": "🎯",
             "web": "🌐", "waf": "🛡️", "tech": "🧩",
             "osint": "🔎", "humint": "👤", "phone": "📱", "smb": "🗄️",
-            "recon": "🛰️", "discovery": "🗺️", "auth": "🔑", "cors": "🈁"}
+            "recon": "🛰️", "discovery": "🗺️", "auth": "🔑", "cors": "🈁",
+            # validated-weakness categories (Strix import / validation)
+            "validation": "🛡️", "idor": "🚪", "ssrf": "🛰️", "rce": "💥",
+            "injection": "💉", "xss": "🕸️", "csrf": "🎣", "bizlogic": "🧠", "cve": "📦"}
 
 
 def _summary_bar(result: ScanResult) -> Text:

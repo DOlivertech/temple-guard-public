@@ -28,6 +28,7 @@ from rich.text import Text
 from . import tools as _tools
 from .checks import CHECK_PLAN, scan as run_scan
 from .report import BLUE, PURPLE
+from .strix import STRIX_CAN_LAUNCH  # shared gate — True only when strix_ext is present (private build)
 
 # Extension point for build-specific scan profiles. None in this build → defensive profiles only.
 _ext = None
@@ -35,6 +36,7 @@ _ext = None
 TOTAL_STEPS = len(CHECK_PLAN)
 DEEP_TOOLS = list(_tools.DEFENSIVE)          # the `--deep` recon set: whatweb, wafw00f, testssl, nmap, nuclei
 MONITOR_TOOLS = DEEP_TOOLS + ["nikto"]       # selectable per target in the dashboard (nikto is opt-in — slow)
+STRIX_STEPS = 4                              # nominal phases for a strix task (pull · scan · validate · report)
 
 GOLD = "#ffd60a"
 TIP = "#fff7cc"
@@ -58,7 +60,7 @@ class Task:
     url: str
     tools: list = field(default_factory=list)   # extra Docker tools to run after the native checks
     recon: list = field(default_factory=list)   # OSINT/recon tools (run via recon_tools.run_recon) — kind="osint"
-    kind: str = "scan"               # scan (native + tools) | osint (recon only) | api (apitest) | op (extension)
+    kind: str = "scan"               # scan (native + tools) | osint (recon only) | api (apitest) | strix (validation) | op (extension)
     offensive: bool = False          # a "hot" task (tints the saber + SCAN tag red); set by the extension
     op: object = None                # an extension-supplied unit of work (run via _ext.run_op) instead of a scan
     status: str = "queued"          # queued | running | done | failed | stopped
@@ -77,6 +79,8 @@ class Task:
         else the native checks + one per Docker tool."""
         if self.op is not None:
             return 1
+        if self.kind == "strix":
+            return STRIX_STEPS
         if self.kind == "osint":
             return max(1, len(self.recon))
         if self.kind == "api":
@@ -151,6 +155,9 @@ class TaskManager:
             return
         if t.kind == "osint":                        # passive OSINT/recon tools (no native web checks)
             self._run_recon(t)
+            return
+        if t.kind == "strix":                        # live Strix validation (private build only)
+            self._run_strix(t)
             return
         t.status = "running"
         t.started = time.monotonic()
@@ -306,6 +313,56 @@ class TaskManager:
             self.log("ERR", f"error   {t.url} — {str(exc)[:50]}")
         t.ended = time.monotonic()
 
+    def _run_strix(self, t: Task) -> None:
+        """Run a live Strix validation as a monitor task and fold its findings into the
+        report. Gated on STRIX_CAN_LAUNCH (private build); honors t._stop (the runner
+        tears down its subprocess). Findings are parsed at the end of the run."""
+        t.status = "running"
+        t.started = time.monotonic()
+        t.current = "strix"
+        self.log("INF", f"strix start {t.url}")
+        from . import strix as _strix
+        if not STRIX_CAN_LAUNCH:
+            self.log("ERR", "strix live validation unavailable — private-build / hosted feature")
+            t.status, t.error, t.current = "failed", "launch unavailable", "no launch"
+            t.ended = time.monotonic()
+            return
+
+        def on_event(kind: str, **k) -> None:
+            # No _Stopped raise here — run_strix polls t._stop itself and terminates
+            # the subprocess cleanly (raising would leak the child).
+            if kind == "phase":
+                t.step = min(t.step + 1, t.total)
+                t.current = k.get("name", "…")
+                self.log("INF", f"strix   {t.url} · {k.get('name', '')}")
+            elif kind == "finding":
+                f = k["finding"]
+                t.findings[f.severity] += 1
+                self.log(LEVEL_FOR_SEV.get(f.severity, "INF"),
+                         f"{f.severity.upper():4} {t.url} · {f.title[:52]}")
+            elif kind == "error":
+                self.log("ERR", f"strix   {t.url} · {str(k.get('message', ''))[:60]}")
+
+        try:
+            res = _strix.run_strix(t.url, on_event=on_event, stop_event=t._stop)
+            t.result = res
+            if getattr(res, "error", "") == "stopped":
+                t.status, t.current = "stopped", "stopped"
+                self.log("WRN", f"stopped {t.url}")
+            elif res.error and not res.findings:
+                t.status, t.error, t.current = "failed", (res.error or "no output"), "error"
+                self.log("ERR", f"failed  {t.url} — {t.error[:50]}")
+            else:
+                t.step, t.status, t.current = t.total, "done", "done"
+                self.log("INF", f"done    {t.url} — {t.n_findings} findings")
+        except _Stopped:
+            t.status, t.current = "stopped", "stopped"
+            self.log("WRN", f"stopped {t.url}")
+        except Exception as exc:  # noqa: BLE001 — surface any error as a failed task
+            t.status, t.error, t.current = "failed", str(exc), "error"
+            self.log("ERR", f"error   {t.url} — {str(exc)[:50]}")
+        t.ended = time.monotonic()
+
     def _run_op(self, t: Task) -> None:
         """Run an extension-supplied op (bounded, returns findings) and fold them into the report."""
         t.status = "running"
@@ -358,6 +415,8 @@ LEVEL_FOR_SEV = {"high": "ERR", "medium": "WRN", "low": "INF", "info": "INF"}
 
 def _profile_label(t: Task) -> str:
     """A short tag for what runs against a target: '' (native only), 'deep', or the tool set."""
+    if t.kind == "strix":
+        return "strix"
     if t.kind == "osint":
         return "osint"
     if t.kind == "api":
@@ -810,6 +869,10 @@ def _prompt_profile(console: Console) -> dict:
                   "theHarvester · subfinder · spiderfoot   (domain / name / email)[/]")
     console.print("    [bold]5[/] API testing     [dim]— discover endpoints + bounded read-only checks[/]")
     choices = ["1", "2", "3", "4", "5"]
+    if STRIX_CAN_LAUNCH:   # live validation is a private-build / hosted feature (public = detect-only, import path)
+        console.print("    [bold]s[/] Strix validation [dim]— autonomous vulnerability validation "
+                      "(runs live in its own sandbox)[/]")
+        choices.append("s")
     if _ext is not None:
         console.print(f"    [bold]6[/] {_ext.PROFILE_LABEL}")
         choices.append("6")
@@ -822,6 +885,8 @@ def _prompt_profile(console: Console) -> dict:
         return _spec(recon=list(OSINT_PROFILE), kind="osint")
     if choice == "5":
         return _spec(kind="api")
+    if choice == "s" and STRIX_CAN_LAUNCH:
+        return _spec(kind="strix")
     if choice == "6" and _ext is not None:
         return _ext.pick_profile(console, 1) or _spec()
     console.print()

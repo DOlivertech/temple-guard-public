@@ -19,6 +19,7 @@ their findings into the same report.
 | `doctor [--pull]` | Check Docker readiness; `--pull` pre-fetches every tool image. |
 | `osint <domain · name · email · phone>` | Passive, read-only OSINT / HUMINT footprint of a domain, name, email, or phone. |
 | `apitest <url>` | Discover an API's endpoints, then run bounded, read-only posture checks. |
+| `strix import <path>` | Ingest a [Strix](https://github.com/usestrix/strix) vulnerability report (a `strix_runs/` directory) → prioritized remediation in the Temple Guard report. Live autonomous validation is a private-build / hosted feature. |
 | `client` · `scope` | Register clients → engagements → authorized scope (stored under `~/.temple-guard/clients`); scoped targets are pickable in `scan` / `playbook` / `pentest`. |
 | `playbook list` · `playbook run <id> <url>` | Ordered recon → web → TLS recipes. |
 | `pentest` | Pick any combination of bounded tests across one or more targets → one combined report. |
@@ -285,6 +286,19 @@ temple-guard pentest https://your-app.example.com --dry-run
 ```
 Same bounded, read-only checks as everywhere else — just assembled into one pass and one
 deliverable.
+
+## Strix — vulnerability validation — `strix import`
+
+[Strix](https://github.com/usestrix/strix) is an open-source engine that autonomously finds and
+**validates** real weaknesses in an app you own — so you can fix them before an attacker finds them.
+Run Strix yourself, then bring its results into Temple Guard for prioritized remediation:
+```bash
+temple-guard strix import ./strix_runs/<run-name>     # → findings + fixes, in the TG report
+temple-guard strix import ./strix_runs/<run-name> -o report.html
+```
+It reads Strix's `vulnerabilities.json` (or `findings.sarif`), maps each finding to a severity +
+category with remediation, and renders it like any other scan. **Live, in-app validation runs are a
+private-build / hosted feature** — this open build is import-only.
 
 ## Clients & scope — `client` / `scope`
 
